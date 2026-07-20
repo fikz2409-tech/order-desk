@@ -282,6 +282,7 @@ function addFollowupRow(defaultDesc){
   `;
   row.querySelector('.rm-btn').onclick = () => row.remove();
   rows.appendChild(row);
+}
 
 async function submitOrder(){
   const sales = document.getElementById('f_sales').value.trim();
