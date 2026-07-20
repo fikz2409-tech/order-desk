@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Order Desk</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+
+  :root{
+    --paper:#faf9f5;
+    --paper-raised:#ffffff;
+    --ink:#1c2230;
+    --ink-soft:#5b6472;
+    --line:#e2e0d8;
+    --pending:#b5482f;
+    --pending-bg:#fbe9e3;
+    --processing:#2560a8;
+    --processing-bg:#e5eef9;
+    --paid:#1c7a56;
+    --paid-bg:#e2f3ea;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'Inter',sans-serif;min-height:100vh;}
+  .app{max-width:920px;margin:0 auto;padding:28px 20px 80px;}
+  header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid var(--ink);padding-bottom:16px;margin-bottom:24px;flex-wrap:wrap;gap:14px;}
+  header h1{font-family:'Space Grotesk',sans-serif;font-size:28px;margin:0;letter-spacing:-0.01em;}
+  header .sub{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);margin-top:4px;}
+  .tabs{display:flex;gap:8px;align-items:center;}
+  .tab{font-family:'IBM Plex Mono',monospace;font-size:13px;padding:8px 16px;border:1px solid var(--ink);background:var(--paper);color:var(--ink);cursor:pointer;border-radius:2px;}
+  .tab.active{background:var(--ink);color:var(--paper);}
+  .logout-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);background:none;border:none;text-decoration:underline;cursor:pointer;}
+
+  /* LOGIN */
+  .login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+  .login-box{background:var(--paper-raised);border:1px solid var(--line);border-radius:6px;padding:32px;width:100%;max-width:360px;}
+  .login-box h1{font-family:'Space Grotesk',sans-serif;font-size:24px;margin:0 0 4px;}
+  .login-box .sub{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);margin-bottom:22px;}
+  .role-toggle{display:flex;gap:8px;margin-bottom:16px;}
+  .role-btn{flex:1;padding:10px;border:1px solid var(--line);background:#fff;border-radius:3px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .role-btn.active{border-color:var(--ink);background:var(--ink);color:#fff;}
+  .login-box input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:3px;font-size:14px;margin-bottom:14px;}
+  .login-btn{width:100%;padding:12px;background:var(--ink);color:#fff;border:none;border-radius:3px;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;cursor:pointer;}
+  .login-error{color:var(--pending);font-family:'IBM Plex Mono',monospace;font-size:12px;margin-top:10px;display:none;}
+
+  /* TICKET FORM */
+  .ticket{background:var(--paper-raised);border:1px solid var(--line);border-radius:4px;padding:24px;position:relative;}
+  .ticket::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:repeating-linear-gradient(90deg, var(--ink) 0 8px, transparent 8px 14px);opacity:.15;}
+  .field{margin-bottom:16px;}
+  .field label{display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);margin-bottom:6px;}
+  .field input, .field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:3px;font-family:'Inter',sans-serif;font-size:14px;background:#fff;color:var(--ink);}
+  .field textarea{resize:vertical;min-height:70px;font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .field input:focus, .field textarea:focus{outline:2px solid var(--processing);outline-offset:1px;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  .submit-btn{width:100%;padding:13px;background:var(--ink);color:var(--paper);border:none;border-radius:3px;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;cursor:pointer;margin-top:6px;}
+  .submit-btn:disabled{opacity:.5;cursor:default;}
+  .confirm{margin-top:14px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--paid);display:none;}
+
+  /* ADMIN */
+  .filters{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+  .filter-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 12px;border:1px solid var(--line);background:#fff;border-radius:20px;cursor:pointer;color:var(--ink-soft);}
+  .filter-btn.active{border-color:var(--ink);color:var(--ink);background:#f0efe9;}
+  .order-card{background:var(--paper-raised);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:3px;padding:16px 18px;margin-bottom:12px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+  .order-card.status-pending{border-left-color:var(--pending);}
+  .order-card.status-processing{border-left-color:var(--processing);}
+  .order-card.status-paid{border-left-color:var(--paid);}
+  .order-main{flex:1;min-width:220px;}
+  .order-id{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);}
+  .order-customer{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;margin:2px 0 6px;}
+  .order-items{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink);white-space:pre-wrap;}
+  .order-meta{font-size:12px;color:var(--ink-soft);margin-top:8px;}
+  .order-meta span{margin-right:14px;}
+  .order-actions{display:flex;flex-direction:column;align-items:flex-end;gap:10px;justify-content:flex-start;min-width:190px;}
+  .badge{font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:4px 10px;border-radius:20px;font-weight:600;}
+  .badge.status-pending{background:var(--pending-bg);color:var(--pending);}
+  .badge.status-processing{background:var(--processing-bg);color:var(--processing);}
+  .badge.status-paid{background:var(--paid-bg);color:var(--paid);}
+  .badge.ship-notpacked{background:#eee;color:#6b6b6b;}
+  .badge.ship-packed{background:#fdf0d5;color:#9a6a12;}
+  .badge.ship-shipped{background:var(--paid-bg);color:var(--paid);}
+  .status-select{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;background:#fff;cursor:pointer;}
+  .fulfill-block{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);width:100%;}
+  .fulfill-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
+  .fulfill-row input{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;flex:1;min-width:120px;}
+  .badges-row{display:flex;gap:6px;flex-wrap:wrap;}
+  .history-toggle{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);background:none;border:none;text-decoration:underline;cursor:pointer;padding:0;margin-top:8px;}
+  .history-list{margin-top:8px;padding-left:12px;border-left:2px solid var(--line);display:none;}
+  .history-list.open{display:block;}
+  .history-item{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);margin-bottom:5px;line-height:1.4;}
+  .history-item .ts{color:var(--ink);}
+  .share-block{margin-top:10px;background:var(--paid-bg);border:1px solid #bfe0cd;border-radius:3px;padding:10px 12px;display:none;}
+  .share-block.show{display:block;}
+  .share-block .ship-line{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--paid);margin-bottom:6px;}
+  .copy-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:5px 10px;border:1px solid var(--paid);color:var(--paid);background:#fff;border-radius:3px;cursor:pointer;}
+  .copy-btn.copied{background:var(--paid);color:#fff;}
+  .empty{text-align:center;padding:60px 20px;color:var(--ink-soft);font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .counts{display:flex;gap:18px;margin-bottom:18px;font-family:'IBM Plex Mono',monospace;font-size:12px;flex-wrap:wrap;}
+  .counts .count-item{display:flex;align-items:center;gap:6px;}
+  .dot{width:8px;height:8px;border-radius:50%;}
+  .dot.status-pending{background:var(--pending);}
+  .dot.status-processing{background:var(--processing);}
+  .dot.status-paid{background:var(--paid);}
+  .loading{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--ink-soft);padding:20px 0;}
+
+  .export-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:12px 14px;background:var(--paper-raised);border:1px solid var(--line);border-radius:4px;}
+  .export-bar label{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);}
+  .export-bar input[type=date]{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:3px;}
+  .export-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:7px 14px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);border-radius:3px;cursor:pointer;}
+  .export-btn.secondary{background:#fff;color:var(--ink);}
+  .export-btn:disabled{opacity:.5;cursor:default;}
+
+  .followup-toggle{display:flex;align-items:center;gap:8px;margin-bottom:14px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);cursor:pointer;}
+  .followup-section{display:none;border:1px dashed var(--line);border-radius:4px;padding:14px;margin-bottom:16px;}
+  .followup-section.open{display:block;}
+  .followup-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;}
+  .followup-row input[type=text]{flex:2;padding:8px 10px;border:1px solid var(--line);border-radius:3px;font-size:13px;}
+  .followup-row input[type=date]{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:3px;font-size:13px;}
+  .followup-row .rm-btn{background:none;border:none;color:var(--pending);cursor:pointer;font-size:16px;padding:0 6px;}
+  .add-followup-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 12px;border:1px dashed var(--ink-soft);background:none;border-radius:3px;cursor:pointer;color:var(--ink-soft);}
+
+  .followup-block{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);width:100%;}
+  .followup-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;font-family:'IBM Plex Mono',monospace;font-size:12px;}
+  .followup-item .fu-desc{flex:1;}
+  .followup-item.fulfilled .fu-desc{color:var(--ink-soft);text-decoration:line-through;}
+  .fu-due{color:var(--ink-soft);font-size:11px;}
+  .fu-due.overdue{color:var(--pending);font-weight:600;}
+  .fu-mark-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 10px;border:1px solid var(--paid);color:var(--paid);background:#fff;border-radius:3px;cursor:pointer;}
+  .fu-mark-btn.undo{border-color:var(--ink-soft);color:var(--ink-soft);}
+  @media (max-width:600px){.row2{grid-template-columns:1fr;} header{flex-direction:column;align-items:flex-start;gap:14px;}}
+</style>
+</head>
+<body>
+
+<div id="loginScreen" class="login-wrap">
+  <div class="login-box">
+    <h1>Order Desk</h1>
+    <div class="sub">SIGN IN TO CONTINUE</div>
+    <div class="role-toggle">
+      <button class="role-btn active" id="roleSales">Sales</button>
+      <button class="role-btn" id="roleAdmin">Admin</button>
+    </div>
+    <input type="password" id="loginPassword" placeholder="Password">
+    <button class="login-btn" id="loginBtn">Sign In</button>
+    <div class="login-error" id="loginError">Incorrect password. Try again.</div>
+  </div>
+</div>
+
+<div class="app" id="mainApp" style="display:none;">
+  <header>
+    <div>
+      <h1>Order Desk</h1>
+      <div class="sub" id="roleLabel">SALES INTAKE → ADMIN PROCESSING</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" id="tabSales">Submit Order</button>
+      <button class="tab" id="tabAdmin" style="display:none;">Admin Desk</button>
+      <button class="logout-btn" id="logoutBtn">Log out</button>
+    </div>
+  </header>
+  <div id="salesView"></div>
+  <div id="adminView" style="display:none;"></div>
+</div>
+
+<script>
+const API = '/api';
+let orders = [];
+let currentFilter = 'all';
+let authToken = localStorage.getItem('od_token') || null;
+let authRole = localStorage.getItem('od_role') || null;
+let loginRole = 'sales';
+
+// ---------- LOGIN ----------
+document.getElementById('roleSales').onclick = () => setLoginRole('sales');
+document.getElementById('roleAdmin').onclick = () => setLoginRole('admin');
+function setLoginRole(r){
+  loginRole = r;
+  document.getElementById('roleSales').classList.toggle('active', r==='sales');
+  document.getElementById('roleAdmin').classList.toggle('active', r==='admin');
+}
+
+document.getElementById('loginBtn').onclick = async () => {
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.style.display = 'none';
+  try{
+    const res = await fetch(`${API}/login`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ role: loginRole, password })
+    });
+    if(!res.ok) throw new Error('bad creds');
+    const data = await res.json();
+    authToken = data.token;
+    authRole = data.role;
+    localStorage.setItem('od_token', authToken);
+    localStorage.setItem('od_role', authRole);
+    enterApp();
+  }catch(e){
+    errEl.style.display = 'block';
+  }
+};
+
+document.getElementById('logoutBtn').onclick = () => {
+  localStorage.removeItem('od_token');
+  localStorage.removeItem('od_role');
+  authToken = null; authRole = null;
+  document.getElementById('mainApp').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+};
+
+function enterApp(){
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'block';
+  document.getElementById('roleLabel').textContent = authRole === 'admin' ? 'ADMIN VIEW' : 'SALES INTAKE';
+  if(authRole === 'admin'){
+    document.getElementById('tabAdmin').style.display = 'inline-block';
+  }
+  renderSales();
+}
+
+if(authToken && authRole){ enterApp(); }
+
+async function apiFetch(path, opts={}){
+  opts.headers = Object.assign({}, opts.headers, {
+    'Authorization': 'Bearer ' + authToken,
+    'Content-Type': 'application/json'
+  });
+  const res = await fetch(API + path, opts);
+  if(res.status === 401 || res.status === 403){
+    alert('Session expired or not authorized. Please log in again.');
+    document.getElementById('logoutBtn').click();
+    throw new Error('unauthorized');
+  }
+  return res.json();
+}
+
+// ---------- SALES ----------
+function renderSales(){
+  const el = document.getElementById('salesView');
+  el.innerHTML = `
+    <div class="ticket">
+      <div class="field"><label>Salesperson</label><input type="text" id="f_sales" placeholder="Your name"></div>
+      <div class="row2">
+        <div class="field"><label>Customer</label><input type="text" id="f_customer" placeholder="Customer / company name"></div>
+        <div class="field"><label>Order Amount (RM)</label><input type="text" id="f_amount" placeholder="0.00" inputmode="decimal"></div>
+      </div>
+      <div class="field"><label>Items (SKU x Qty, one per line)</label><textarea id="f_items" placeholder="SKU-1023 x 12&#10;SKU-4410 x 5"></textarea></div>
+      <div class="field"><label>Notes (optional)</label><textarea id="f_notes" style="min-height:44px;font-family:'Inter',sans-serif;" placeholder="Delivery instructions, special requests, etc."></textarea></div>
+
+      <label class="followup-toggle">
+        <input type="checkbox" id="f_followup_toggle">
+        This order has a split delivery schedule (e.g. 3 months now, 3 months requested later)
+      </label>
+      <div class="followup-section" id="followupSection">
+        <div id="followupRows"></div>
+        <button type="button" class="add-followup-btn" id="addFollowupBtn">+ Add scheduled delivery</button>
+      </div>
+
+      <button class="submit-btn" id="submitBtn">Submit Order to Admin</button>
+      <div class="confirm" id="confirmMsg"></div>
+    </div>
+  `;
+  document.getElementById('submitBtn').onclick = submitOrder;
+
+  document.getElementById('f_followup_toggle').onchange = (e) => {
+    const section = document.getElementById('followupSection');
+    section.classList.toggle('open', e.target.checked);
+    if(e.target.checked && document.getElementById('followupRows').children.length === 0){
+      addFollowupRow('Next 3-month batch');
+    }
+  };
+  document.getElementById('addFollowupBtn').onclick = () => addFollowupRow('');
+}
+
+function addFollowupRow(defaultDesc){
+  const rows = document.getElementById('followupRows');
+  const row = document.createElement('div');
+  row.className = 'followup-row';
+  row.innerHTML = `
+    <input type="text" class="fu-desc-input" placeholder="e.g. Second 3-month batch" value="${defaultDesc || ''}">
+    <input type="date" class="fu-date-input">
+    <button type="button" class="rm-btn" title="Remove">×</button>
+  `;
+  row.querySelector('.rm-btn').onclick = () => row.remove();
+  rows.appendChild(row);
+
+async function submitOrder(){
+  const sales = document.getElementById('f_sales').value.trim();
+  const customer = document.getElementById('f_customer').value.trim();
+  const amount = document.getElementById('f_amount').value.trim();
+  const items = document.getElementById('f_items').value.trim();
+  const notes = document.getElementById('f_notes').value.trim();
+  if(!sales || !customer || !items){ alert('Please fill in salesperson, customer, and items at minimum.'); return; }
+
+  let followUps = [];
+  if(document.getElementById('f_followup_toggle').checked){
+    followUps = Array.from(document.querySelectorAll('#followupRows .followup-row')).map(row => ({
+      description: row.querySelector('.fu-desc-input').value.trim(),
+      dueDate: row.querySelector('.fu-date-input').value || null
+    })).filter(f => f.description);
+  }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true; btn.textContent = 'Submitting...';
+
+  try{
+    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, customer, amount, items, notes, followUps }) });
+    btn.disabled = false; btn.textContent = 'Submit Order to Admin';
+    const confirm = document.getElementById('confirmMsg');
+    confirm.style.display = 'block';
+    confirm.textContent = `✓ Submitted — Order ID ${order.id}`;
+    document.getElementById('f_customer').value='';
+    document.getElementById('f_amount').value='';
+    document.getElementById('f_items').value='';
+    document.getElementById('f_notes').value='';
+    document.getElementById('f_followup_toggle').checked = false;
+    document.getElementById('followupSection').classList.remove('open');
+    document.getElementById('followupRows').innerHTML = '';
+    setTimeout(()=>{ confirm.style.display='none'; }, 5000);
+  }catch(e){
+    btn.disabled = false; btn.textContent = 'Submit Order to Admin';
+  }
+}
+
+// ---------- ADMIN ----------
+document.getElementById('tabSales').onclick = () => {
+  document.getElementById('tabSales').classList.add('active');
+  document.getElementById('tabAdmin').classList.remove('active');
+  document.getElementById('salesView').style.display='block';
+  document.getElementById('adminView').style.display='none';
+};
+document.getElementById('tabAdmin').onclick = () => {
+  document.getElementById('tabAdmin').classList.add('active');
+  document.getElementById('tabSales').classList.remove('active');
+  document.getElementById('adminView').style.display='block';
+  document.getElementById('salesView').style.display='none';
+  renderAdmin();
+};
+
+async function renderAdmin(){
+  const el = document.getElementById('adminView');
+  el.innerHTML = '<div class="loading">Loading orders…</div>';
+  try{
+    orders = await apiFetch('/orders');
+  }catch(e){ return; }
+
+  const counts = { pending:0, processing:0, paid:0 };
+  const shipCounts = { notpacked:0, packed:0, shipped:0 };
+  let pendingFollowUps = 0;
+  orders.forEach(o => {
+    if(counts[o.status]!==undefined) counts[o.status]++;
+    const f = o.fulfillment || 'notpacked';
+    if(shipCounts[f]!==undefined) shipCounts[f]++;
+    (o.follow_ups||[]).forEach(fu => { if(fu.status === 'pending') pendingFollowUps++; });
+  });
+
+  let filtered = orders;
+  if(currentFilter !== 'all'){
+    if(currentFilter === 'followups'){
+      filtered = orders.filter(o => (o.follow_ups||[]).some(fu => fu.status === 'pending'));
+    } else if(currentFilter.startsWith('ship:')){
+      const val = currentFilter.split(':')[1];
+      filtered = orders.filter(o => (o.fulfillment||'notpacked') === val);
+    } else {
+      filtered = orders.filter(o => o.status === currentFilter);
+    }
+  }
+
+  el.innerHTML = `
+    <div class="export-bar">
+      <label>From</label>
+      <input type="date" id="exportFrom">
+      <label>To</label>
+      <input type="date" id="exportTo">
+      <button class="export-btn secondary" id="exportCsvBtn">Export CSV</button>
+      <button class="export-btn" id="exportXlsxBtn">Export Excel</button>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);">Exports respect the active filter below</span>
+    </div>
+    <div class="counts">
+      <div class="count-item"><span class="dot status-pending"></span>${counts.pending} Pending</div>
+      <div class="count-item"><span class="dot status-processing"></span>${counts.processing} Processing</div>
+      <div class="count-item"><span class="dot status-paid"></span>${counts.paid} Paid</div>
+      <div class="count-item">·</div>
+      <div class="count-item"><span class="dot" style="background:#9a6a12"></span>${shipCounts.packed} Packed</div>
+      <div class="count-item"><span class="dot status-paid"></span>${shipCounts.shipped} Shipped</div>
+      <div class="count-item">·</div>
+      <div class="count-item"><span class="dot" style="background:#7c5cbf"></span>${pendingFollowUps} Follow-ups due</div>
+    </div>
+    <div class="filters">
+      <button class="filter-btn ${currentFilter==='all'?'active':''}" data-f="all">All (${orders.length})</button>
+      <button class="filter-btn ${currentFilter==='pending'?'active':''}" data-f="pending">Payment: Pending</button>
+      <button class="filter-btn ${currentFilter==='processing'?'active':''}" data-f="processing">Payment: Processing</button>
+      <button class="filter-btn ${currentFilter==='paid'?'active':''}" data-f="paid">Payment: Paid</button>
+      <button class="filter-btn ${currentFilter==='ship:notpacked'?'active':''}" data-f="ship:notpacked">Awaiting Packing</button>
+      <button class="filter-btn ${currentFilter==='ship:shipped'?'active':''}" data-f="ship:shipped">Shipped</button>
+      <button class="filter-btn ${currentFilter==='followups'?'active':''}" data-f="followups">Follow-ups Due</button>
+      <button class="filter-btn" id="refreshBtn" style="margin-left:auto;">↻ Refresh</button>
+    </div>
+    <div id="orderList"></div>
+  `;
+
+  el.querySelectorAll('.filter-btn[data-f]').forEach(b => { b.onclick = () => { currentFilter = b.dataset.f; renderAdmin(); }; });
+  document.getElementById('refreshBtn').onclick = () => renderAdmin();
+  document.getElementById('exportCsvBtn').onclick = () => exportOrders('csv');
+  document.getElementById('exportXlsxBtn').onclick = () => exportOrders('xlsx');
+
+  const list = document.getElementById('orderList');
+  if(filtered.length === 0){ list.innerHTML = '<div class="empty">No orders here yet.</div>'; return; }
+
+  list.innerHTML = filtered.map(o => `
+    <div class="order-card status-${o.status}">
+      <div class="order-main">
+        <div class="order-id">${o.id}</div>
+        <div class="order-customer">${escapeHtml(o.customer)}</div>
+        <div class="order-items">${escapeHtml(o.items)}</div>
+        <div class="order-meta">
+          <span>Sales: ${escapeHtml(o.salesperson)}</span>
+          ${o.amount ? `<span>RM ${escapeHtml(o.amount)}</span>` : ''}
+          <span>${new Date(o.created_at).toLocaleString()}</span>
+        </div>
+        ${o.notes ? `<div class="order-meta">Note: ${escapeHtml(o.notes)}</div>` : ''}
+        <div class="fulfill-block">
+          <div class="fulfill-row">
+            <input type="text" class="courier-input" data-id="${o.id}" placeholder="Courier (e.g. J&T)" value="${escapeHtml(o.courier||'')}">
+            <input type="text" class="tracking-input" data-id="${o.id}" placeholder="Tracking / AWB number" value="${escapeHtml(o.tracking||'')}">
+          </div>
+          <div class="share-block ${o.fulfillment==='shipped' && (o.courier||o.tracking) ? 'show':''}" data-share="${o.id}">
+            <div class="ship-line">📦 ${escapeHtml(o.courier||'Courier TBC')} — AWB ${escapeHtml(o.tracking||'TBC')}</div>
+            <button class="copy-btn" data-copy="${o.id}">Copy shipment info</button>
+          </div>
+          <button class="history-toggle" data-hist="${o.id}">View history (${o.history ? o.history.length : 0})</button>
+          <div class="history-list" id="hist-${o.id}">
+            ${(o.history||[]).slice().reverse().map(h => `<div class="history-item"><span class="ts">${new Date(h.ts).toLocaleString()}</span> — ${escapeHtml(h.text)}</div>`).join('')}
+          </div>
+          ${(o.follow_ups && o.follow_ups.length) ? `
+          <div class="followup-block">
+            <div class="ts" style="color:var(--ink-soft);margin-bottom:6px;">Scheduled deliveries</div>
+            ${o.follow_ups.map(fu => {
+              const today = new Date().toISOString().slice(0,10);
+              const overdue = fu.status === 'pending' && fu.dueDate && fu.dueDate < today;
+              return `
+              <div class="followup-item ${fu.status==='fulfilled'?'fulfilled':''}">
+                <span class="fu-desc">${escapeHtml(fu.description)}</span>
+                <span class="fu-due ${overdue?'overdue':''}">${fu.dueDate ? (overdue ? 'Overdue: ' : 'Due ') + fu.dueDate : 'No date set'}</span>
+                <button class="fu-mark-btn ${fu.status==='fulfilled'?'undo':''}" data-order="${o.id}" data-fu="${fu.id}" data-newstatus="${fu.status==='fulfilled'?'pending':'fulfilled'}">
+                  ${fu.status==='fulfilled' ? 'Undo' : 'Mark done'}
+                </button>
+              </div>`;
+            }).join('')}
+          </div>` : ''}
+        </div>
+      </div>
+      <div class="order-actions">
+        <div class="badges-row">
+          <span class="badge status-${o.status}">${o.status}</span>
+          <span class="badge ship-${o.fulfillment||'notpacked'}">${(o.fulfillment||'notpacked')==='notpacked'?'not packed':o.fulfillment}</span>
+        </div>
+        <select class="status-select" data-id="${o.id}" data-field="status">
+          <option value="pending" ${o.status==='pending'?'selected':''}>Payment: Pending</option>
+          <option value="processing" ${o.status==='processing'?'selected':''}>Payment: Processing</option>
+          <option value="paid" ${o.status==='paid'?'selected':''}>Payment: Paid</option>
+        </select>
+        <select class="status-select" data-id="${o.id}" data-field="fulfillment">
+          <option value="notpacked" ${(o.fulfillment||'notpacked')==='notpacked'?'selected':''}>Not Packed</option>
+          <option value="packed" ${o.fulfillment==='packed'?'selected':''}>Packed</option>
+          <option value="shipped" ${o.fulfillment==='shipped'?'selected':''}>Shipped</option>
+        </select>
+      </div>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.status-select').forEach(sel => {
+    sel.onchange = async (e) => {
+      const id = e.target.dataset.id, field = e.target.dataset.field;
+      try{ await apiFetch(`/orders/${id}`, { method:'PATCH', body: JSON.stringify({ [field]: e.target.value }) }); renderAdmin(); }catch(e){}
+    };
+  });
+
+  list.querySelectorAll('.courier-input, .tracking-input').forEach(inp => {
+    inp.onchange = async (e) => {
+      const id = e.target.dataset.id;
+      const field = e.target.classList.contains('courier-input') ? 'courier' : 'tracking';
+      try{ await apiFetch(`/orders/${id}`, { method:'PATCH', body: JSON.stringify({ [field]: e.target.value }) }); renderAdmin(); }catch(e){}
+    };
+  });
+
+  list.querySelectorAll('.history-toggle').forEach(btn => {
+    btn.onclick = () => document.getElementById('hist-' + btn.dataset.hist).classList.toggle('open');
+  });
+
+  list.querySelectorAll('.fu-mark-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const { order, fu, newstatus } = btn.dataset;
+      try{
+        await apiFetch(`/orders/${order}/followups/${fu}`, { method:'PATCH', body: JSON.stringify({ status: newstatus }) });
+        renderAdmin();
+      }catch(e){}
+    };
+  });
+
+  list.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.onclick = () => {
+      const ord = orders.find(o => o.id === btn.dataset.copy);
+      if(!ord) return;
+      const text = `Order ${ord.id} for ${ord.customer}\nCourier: ${ord.courier || 'TBC'}\nTracking/AWB: ${ord.tracking || 'TBC'}`;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied ✓'; btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy shipment info'; btn.classList.remove('copied'); }, 2000);
+      });
+    };
+  });
+}
+
+function escapeHtml(str){ const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+async function exportOrders(format){
+  const params = new URLSearchParams();
+  if(currentFilter !== 'all'){
+    if(currentFilter.startsWith('ship:')) params.set('fulfillment', currentFilter.split(':')[1]);
+    else params.set('status', currentFilter);
+  }
+  const from = document.getElementById('exportFrom').value;
+  const to = document.getElementById('exportTo').value;
+  if(from) params.set('from', from);
+  if(to) params.set('to', to + 'T23:59:59');
+
+  const btn = format === 'csv' ? document.getElementById('exportCsvBtn') : document.getElementById('exportXlsxBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Preparing…';
+
+  try{
+    const res = await fetch(`${API}/orders/export.${format}?${params.toString()}`, {
+      headers: { 'Authorization': 'Bearer ' + authToken }
+    });
+    if(!res.ok){
+      if(res.status === 401 || res.status === 403){
+        alert('Session expired or not authorized. Please log in again.');
+        document.getElementById('logoutBtn').click();
+        return;
+      }
+      throw new Error('Export failed');
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `orders-${new Date().toISOString().slice(0,10)}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  }catch(e){
+    alert('Export failed. Please try again.');
+  }finally{
+    btn.disabled = false; btn.textContent = originalText;
+  }
+}
+</script>
+</body>
+</html>
