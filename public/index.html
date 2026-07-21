@@ -230,7 +230,12 @@ async function apiFetch(path, opts={}){
     document.getElementById('logoutBtn').click();
     throw new Error('unauthorized');
   }
-  return res.json();
+  let data = null;
+  try { data = await res.json(); } catch(e) { /* no JSON body */ }
+  if(!res.ok){
+    throw new Error((data && data.error) || `Request failed (status ${res.status})`);
+  }
+  return data;
 }
 
 // ---------- SALES ----------
@@ -429,7 +434,11 @@ async function renderAdmin(){
           <div class="share-block ${o.fulfillment==='shipped' && (o.courier||o.tracking) ? 'show':''}" data-share="${o.id}">
             <div class="ship-line">📦 ${escapeHtml(o.courier||'Courier TBC')} — AWB ${escapeHtml(o.tracking||'TBC')}</div>
             <button class="copy-btn" data-copy="${o.id}">Copy shipment info</button>
-            ${o.salesperson_email ? `<button class="copy-btn" data-emailtrack="${o.id}" style="margin-left:6px;">Email to sales</button>` : `<span class="ts" style="color:var(--ink-soft);margin-left:6px;">No sales email on file</span>`}
+            ${o.salesperson_email
+              ? (o.tracking_emailed
+                  ? `<span class="ts" style="color:var(--paid);margin-left:6px;">✓ Auto-emailed to sales</span> <button class="copy-btn" data-emailtrack="${o.id}" style="margin-left:6px;">Resend</button>`
+                  : `<button class="copy-btn" data-emailtrack="${o.id}" style="margin-left:6px;">Email to sales</button>`)
+              : `<span class="ts" style="color:var(--ink-soft);margin-left:6px;">No sales email on file</span>`}
           </div>
           <button class="history-toggle" data-hist="${o.id}">View history (${o.history ? o.history.length : 0})</button>
           <div class="history-list" id="hist-${o.id}">
