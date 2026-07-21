@@ -117,3 +117,5 @@ can pull something like "all Paid orders shipped in June" in two clicks.
 
 - **CSV** — universal, opens in Excel/Sheets/Numbers, good for quick pulls or feeding into other tools.
 - **Excel (.xlsx)** — proper formatted spreadsheet with bold headers and auto-filter dropdowns already turned on, ready to hand to an accountant or manager.
+
+
