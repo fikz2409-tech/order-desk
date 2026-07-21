@@ -22,11 +22,13 @@ async function init() {
       tracking TEXT DEFAULT '',
       history JSONB DEFAULT '[]',
       follow_ups JSONB DEFAULT '[]',
+      salesperson_email TEXT DEFAULT '',
       created_at TIMESTAMPTZ DEFAULT now()
     );
   `);
-  // Safe to run every startup: adds the column if this table pre-dates it.
+  // Safe to run every startup: adds columns if this table pre-dates them.
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS follow_ups JSONB DEFAULT '[]';`);
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS salesperson_email TEXT DEFAULT '';`);
   console.log('Database ready.');
 }
 

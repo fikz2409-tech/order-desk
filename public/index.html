@@ -239,6 +239,7 @@ function renderSales(){
   el.innerHTML = `
     <div class="ticket">
       <div class="field"><label>Salesperson</label><input type="text" id="f_sales" placeholder="Your name"></div>
+      <div class="field"><label>Your Email (for order updates)</label><input type="email" id="f_sales_email" placeholder="you@yourcompany.com"></div>
       <div class="row2">
         <div class="field"><label>Customer</label><input type="text" id="f_customer" placeholder="Customer / company name"></div>
         <div class="field"><label>Order Amount (RM)</label><input type="text" id="f_amount" placeholder="0.00" inputmode="decimal"></div>
@@ -286,6 +287,7 @@ function addFollowupRow(defaultDesc){
 
 async function submitOrder(){
   const sales = document.getElementById('f_sales').value.trim();
+  const salesEmail = document.getElementById('f_sales_email').value.trim();
   const customer = document.getElementById('f_customer').value.trim();
   const amount = document.getElementById('f_amount').value.trim();
   const items = document.getElementById('f_items').value.trim();
@@ -304,7 +306,7 @@ async function submitOrder(){
   btn.disabled = true; btn.textContent = 'Submitting...';
 
   try{
-    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, customer, amount, items, notes, followUps }) });
+    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, amount, items, notes, followUps }) });
     btn.disabled = false; btn.textContent = 'Submit Order to Admin';
     const confirm = document.getElementById('confirmMsg');
     confirm.style.display = 'block';
@@ -427,6 +429,7 @@ async function renderAdmin(){
           <div class="share-block ${o.fulfillment==='shipped' && (o.courier||o.tracking) ? 'show':''}" data-share="${o.id}">
             <div class="ship-line">📦 ${escapeHtml(o.courier||'Courier TBC')} — AWB ${escapeHtml(o.tracking||'TBC')}</div>
             <button class="copy-btn" data-copy="${o.id}">Copy shipment info</button>
+            ${o.salesperson_email ? `<button class="copy-btn" data-emailtrack="${o.id}" style="margin-left:6px;">Email to sales</button>` : `<span class="ts" style="color:var(--ink-soft);margin-left:6px;">No sales email on file</span>`}
           </div>
           <button class="history-toggle" data-hist="${o.id}">View history (${o.history ? o.history.length : 0})</button>
           <div class="history-list" id="hist-${o.id}">
@@ -445,6 +448,7 @@ async function renderAdmin(){
                 <button class="fu-mark-btn ${fu.status==='fulfilled'?'undo':''}" data-order="${o.id}" data-fu="${fu.id}" data-newstatus="${fu.status==='fulfilled'?'pending':'fulfilled'}">
                   ${fu.status==='fulfilled' ? 'Undo' : 'Mark done'}
                 </button>
+                ${o.salesperson_email && fu.status==='pending' ? `<button class="fu-mark-btn" data-remind-order="${o.id}" data-remind-fu="${fu.id}" style="border-color:var(--processing);color:var(--processing);">Send reminder</button>` : ''}
               </div>`;
             }).join('')}
           </div>` : ''}
@@ -498,7 +502,39 @@ async function renderAdmin(){
     };
   });
 
-  list.querySelectorAll('.copy-btn').forEach(btn => {
+  list.querySelectorAll('[data-emailtrack]').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.emailtrack;
+      const original = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Sending...';
+      try{
+        await apiFetch(`/orders/${id}/email-tracking`, { method:'POST' });
+        btn.textContent = 'Sent ✓';
+        setTimeout(() => renderAdmin(), 1200);
+      }catch(e){
+        alert(e.message || 'Failed to send email. Check SMTP settings.');
+        btn.disabled = false; btn.textContent = original;
+      }
+    };
+  });
+
+  list.querySelectorAll('[data-remind-order]').forEach(btn => {
+    btn.onclick = async () => {
+      const order = btn.dataset.remindOrder, fu = btn.dataset.remindFu;
+      const original = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Sending...';
+      try{
+        await apiFetch(`/orders/${order}/followups/${fu}/email-reminder`, { method:'POST' });
+        btn.textContent = 'Sent ✓';
+        setTimeout(() => renderAdmin(), 1200);
+      }catch(e){
+        alert(e.message || 'Failed to send email. Check SMTP settings.');
+        btn.disabled = false; btn.textContent = original;
+      }
+    };
+  });
+
+  list.querySelectorAll('.copy-btn[data-copy]').forEach(btn => {
     btn.onclick = () => {
       const ord = orders.find(o => o.id === btn.dataset.copy);
       if(!ord) return;

@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const ExcelJS = require('exceljs');
+const nodemailer = require('nodemailer');
 const { pool, init } = require('./db');
 
 const app = express();
@@ -12,6 +13,33 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const SALES_PASSWORD = process.env.SALES_PASSWORD || 'sales123';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+
+// --- Email setup ---
+// Works with any SMTP provider: your company's Office 365/Google Workspace
+// SMTP relay, or a transactional service like SendGrid/Mailgun.
+let mailer = null;
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  mailer = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+  });
+  console.log('Email sending enabled via', process.env.SMTP_HOST);
+} else {
+  console.log('Email sending disabled: SMTP_HOST/SMTP_USER/SMTP_PASS not set.');
+}
+
+async function sendMail({ to, subject, text }) {
+  if (!mailer) throw new Error('Email is not configured on this server yet.');
+  if (!to) throw new Error('This order has no salesperson email on file.');
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    text
+  });
+}
 
 function genId() {
   const n = Date.now().toString(36).toUpperCase().slice(-5);
@@ -146,7 +174,7 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
 });
 
 app.post('/api/orders', checkAuth, async (req, res) => {
-  const { salesperson, customer, amount, items, notes, followUps } = req.body || {};
+  const { salesperson, salespersonEmail, customer, amount, items, notes, followUps } = req.body || {};
   if (!salesperson || !customer || !items) {
     return res.status(400).json({ error: 'salesperson, customer, and items are required' });
   }
@@ -169,9 +197,9 @@ app.post('/api/orders', checkAuth, async (req, res) => {
   }
 
   await pool.query(
-    `INSERT INTO orders (id, salesperson, customer, amount, items, notes, history, follow_ups)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [id, salesperson, customer, amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps)]
+    `INSERT INTO orders (id, salesperson, salesperson_email, customer, amount, items, notes, history, follow_ups)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [id, salesperson, salespersonEmail || '', customer, amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps)]
   );
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.status(201).json(result.rows[0]);
@@ -237,6 +265,62 @@ app.patch('/api/orders/:id/followups/:fid', checkAuth, requireAdmin, async (req,
   ]);
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.json(result.rows[0]);
+});
+
+// Admin emails the current tracking/shipment info to the salesperson on file
+app.post('/api/orders/:id/email-tracking', checkAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const o = existing.rows[0];
+
+  const text = [
+    `Order ${o.id} for ${o.customer}`,
+    `Payment status: ${o.status}`,
+    `Fulfillment: ${o.fulfillment}`,
+    `Courier: ${o.courier || 'TBC'}`,
+    `Tracking / AWB: ${o.tracking || 'TBC'}`,
+    o.notes ? `Notes: ${o.notes}` : null
+  ].filter(Boolean).join('\n');
+
+  try {
+    await sendMail({ to: o.salesperson_email, subject: `Order ${o.id} — tracking update`, text });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+
+  const history = o.history || [];
+  history.push({ ts: new Date().toISOString(), text: `Tracking info emailed to ${o.salesperson_email}` });
+  await pool.query('UPDATE orders SET history=$1 WHERE id=$2', [JSON.stringify(history), id]);
+  res.json({ ok: true });
+});
+
+// Admin emails a reminder about a specific scheduled follow-up delivery
+app.post('/api/orders/:id/followups/:fid/email-reminder', checkAuth, requireAdmin, async (req, res) => {
+  const { id, fid } = req.params;
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const o = existing.rows[0];
+  const fu = (o.follow_ups || []).find(f => f.id === fid);
+  if (!fu) return res.status(404).json({ error: 'Follow-up not found' });
+
+  const text = [
+    `Reminder for order ${o.id} — ${o.customer}`,
+    `Scheduled delivery: ${fu.description}`,
+    fu.dueDate ? `Due date: ${fu.dueDate}` : 'No due date set',
+    `Status: ${fu.status}`
+  ].join('\n');
+
+  try {
+    await sendMail({ to: o.salesperson_email, subject: `Reminder: ${fu.description} — Order ${o.id}`, text });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+
+  const history = o.history || [];
+  history.push({ ts: new Date().toISOString(), text: `Reminder emailed to ${o.salesperson_email} for "${fu.description}"` });
+  await pool.query('UPDATE orders SET history=$1 WHERE id=$2', [JSON.stringify(history), id]);
+  res.json({ ok: true });
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
