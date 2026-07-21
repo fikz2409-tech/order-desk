@@ -23,7 +23,15 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT) || 587,
     secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    // Railway's network sometimes prefers IPv6, and outbound IPv6 to some
+    // SMTP providers hangs rather than failing fast. Forcing IPv4 avoids
+    // that; the shorter timeouts make failures surface in seconds, not
+    // the ~2 minutes nodemailer defaults to.
+    family: 4,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
   });
   console.log('Email sending enabled via', process.env.SMTP_HOST);
 } else {
@@ -238,6 +246,37 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
      WHERE id = $6`,
     [status, fulfillment, courier, tracking, JSON.stringify(history), id]
   );
+
+  // Auto-send: once an order is Shipped with courier + tracking present,
+  // email the salesperson automatically — but only once per order, so
+  // editing the tracking number later doesn't re-trigger a flood of emails.
+  const refreshed = (await pool.query('SELECT * FROM orders WHERE id=$1', [id])).rows[0];
+  const readyToNotify = refreshed.fulfillment === 'shipped'
+    && (refreshed.courier || refreshed.tracking)
+    && refreshed.salesperson_email
+    && !refreshed.tracking_emailed
+    && mailer;
+
+  if (readyToNotify) {
+    const text = [
+      `Order ${refreshed.id} for ${refreshed.customer}`,
+      `Payment status: ${refreshed.status}`,
+      `Fulfillment: ${refreshed.fulfillment}`,
+      `Courier: ${refreshed.courier || 'TBC'}`,
+      `Tracking / AWB: ${refreshed.tracking || 'TBC'}`
+    ].join('\n');
+    try {
+      await sendMail({ to: refreshed.salesperson_email, subject: `Order ${refreshed.id} — shipped`, text });
+      const newHistory = refreshed.history || [];
+      newHistory.push({ ts: new Date().toISOString(), text: `Tracking info automatically emailed to ${refreshed.salesperson_email}` });
+      await pool.query('UPDATE orders SET tracking_emailed=true, history=$1 WHERE id=$2', [JSON.stringify(newHistory), id]);
+    } catch (e) {
+      console.error('Auto-email failed for order', id, e.message);
+      // Don't fail the status update just because email sending failed —
+      // admin can still use the manual "Email to sales" button as a fallback.
+    }
+  }
+
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.json(result.rows[0]);
 });
@@ -291,7 +330,7 @@ app.post('/api/orders/:id/email-tracking', checkAuth, requireAdmin, async (req, 
 
   const history = o.history || [];
   history.push({ ts: new Date().toISOString(), text: `Tracking info emailed to ${o.salesperson_email}` });
-  await pool.query('UPDATE orders SET history=$1 WHERE id=$2', [JSON.stringify(history), id]);
+  await pool.query('UPDATE orders SET history=$1, tracking_emailed=true WHERE id=$2', [JSON.stringify(history), id]);
   res.json({ ok: true });
 });
 
