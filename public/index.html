@@ -771,17 +771,44 @@ function renderCatalogTable(filter){
 
 function normalizeHeader(h){ return String(h||'').trim().toLowerCase().replace(/[^a-z]/g,''); }
 
+// Strips currency symbols, thousand-separator commas, and stray spaces
+// before parsing — handles values like "RM 1,200.00" or "1200" or "RM1200.5"
+function cleanNumber(val){
+  if(val === undefined || val === null || val === '') return 0;
+  if(typeof val === 'number') return val;
+  const cleaned = String(val).replace(/[^0-9.\-]/g, '');
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
 function mapRowToProduct(row){
-  const map = {};
-  Object.keys(row).forEach(k => { map[normalizeHeader(k)] = row[k]; });
-  const get = (...keys) => { for(const k of keys){ if(map[k] !== undefined) return map[k]; } return ''; };
-  return {
-    sku: String(get('sku','productcode','code')).trim(),
-    name: String(get('name','productname','description')).trim(),
-    priceOriginal: parseFloat(get('originalprice','price','retailprice')) || 0,
-    priceDoctor: parseFloat(get('doctorprice','doctorsprice','drprice')) || 0,
-    pricePharmacist: parseFloat(get('pharmacistprice','pharmacistsprice')) || 0
-  };
+  const entries = Object.keys(row).map(k => ({ norm: normalizeHeader(k), val: row[k] }));
+
+  // Finds the first header whose normalized text contains ALL keywords in
+  // a given group, trying each group in order until one matches. This
+  // means "Original Price", "Original Price (RM)", and "orig. price" all
+  // resolve to the same field, instead of requiring an exact match.
+  function find(...keywordGroups){
+    for(const group of keywordGroups){
+      const hit = entries.find(e => group.every(kw => e.norm.includes(kw)));
+      if(hit) return hit.val;
+    }
+    return '';
+  }
+
+  const sku = String(find(['sku'], ['productcode'], ['itemcode'], ['code'])).trim();
+  const name = String(find(['name'], ['productname'], ['itemname'], ['description'])).trim();
+  const priceOriginal = cleanNumber(find(
+    ['original','price'], ['retail','price'], ['normal','price'], ['original'], ['price']
+  ));
+  const priceDoctor = cleanNumber(find(
+    ['doctor','price'], ['dr','price'], ['doctor']
+  ));
+  const pricePharmacist = cleanNumber(find(
+    ['pharmacist','price'], ['pharmacy','price'], ['pharmacist']
+  ));
+
+  return { sku, name, priceOriginal, priceDoctor, pricePharmacist };
 }
 
 function handleCatalogFile(e){
