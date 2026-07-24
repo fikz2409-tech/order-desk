@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const ExcelJS = require('exceljs');
-const nodemailer = require('nodemailer');
 const { pool, init } = require('./db');
 
 const app = express();
@@ -15,38 +14,43 @@ const SALES_PASSWORD = process.env.SALES_PASSWORD || 'sales123';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
 // --- Email setup ---
-// Works with any SMTP provider: your company's Office 365/Google Workspace
-// SMTP relay, or a transactional service like SendGrid/Mailgun.
-let mailer = null;
-if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-  mailer = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    // Railway's network sometimes prefers IPv6, and outbound IPv6 to some
-    // SMTP providers hangs rather than failing fast. Forcing IPv4 avoids
-    // that; the shorter timeouts make failures surface in seconds, not
-    // the ~2 minutes nodemailer defaults to.
-    family: 4,
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000
-  });
-  console.log('Email sending enabled via', process.env.SMTP_HOST);
+// Sends via Brevo's HTTPS API rather than SMTP. Railway blocks outbound
+// SMTP ports (25/465/587) on Free/Trial/Hobby plans, but never blocks
+// standard HTTPS (443), so this works on any Railway plan.
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+const SENDER_EMAIL = process.env.SENDER_EMAIL || '';
+const SENDER_NAME = process.env.SENDER_NAME || 'Order Desk';
+
+if (BREVO_API_KEY && SENDER_EMAIL) {
+  console.log('Email sending enabled via Brevo API, sender:', SENDER_EMAIL);
 } else {
-  console.log('Email sending disabled: SMTP_HOST/SMTP_USER/SMTP_PASS not set.');
+  console.log('Email sending disabled: BREVO_API_KEY/SENDER_EMAIL not set.');
 }
 
 async function sendMail({ to, subject, text }) {
-  if (!mailer) throw new Error('Email is not configured on this server yet.');
+  if (!BREVO_API_KEY || !SENDER_EMAIL) throw new Error('Email is not configured on this server yet.');
   if (!to) throw new Error('This order has no salesperson email on file.');
-  await mailer.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to,
-    subject,
-    text
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': BREVO_API_KEY,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      sender: { email: SENDER_EMAIL, name: SENDER_NAME },
+      to: [{ email: to }],
+      subject,
+      textContent: text
+    })
   });
+
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).message; } catch (e) { /* ignore */ }
+    throw new Error(`Brevo API error (${res.status}): ${detail || 'send failed'}`);
+  }
 }
 
 function genId() {
