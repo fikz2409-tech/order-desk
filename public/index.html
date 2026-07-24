@@ -125,9 +125,33 @@
   .fu-due.overdue{color:var(--pending);font-weight:600;}
   .fu-mark-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 10px;border:1px solid var(--paid);color:var(--paid);background:#fff;border-radius:3px;cursor:pointer;}
   .fu-mark-btn.undo{border-color:var(--ink-soft);color:var(--ink-soft);}
+
+  /* PRODUCTS TAB */
+  .upload-box{background:var(--paper-raised);border:2px dashed var(--line);border-radius:6px;padding:28px;text-align:center;margin-bottom:20px;}
+  .upload-box input[type=file]{margin-top:10px;}
+  .upload-hint{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);margin-top:8px;}
+  .preview-table, .catalog-table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;}
+  .preview-table th, .catalog-table th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);padding:8px 10px;}
+  .preview-table td, .catalog-table td{padding:8px 10px;border-bottom:1px solid var(--line);font-family:'IBM Plex Mono',monospace;}
+  .confirm-upload-btn{padding:11px 20px;background:var(--ink);color:#fff;border:none;border-radius:3px;font-family:'Space Grotesk',sans-serif;font-weight:600;cursor:pointer;}
+  .catalog-search{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:3px;margin-bottom:14px;font-size:13px;}
+  .del-sku-btn{background:none;border:none;color:var(--pending);cursor:pointer;font-size:13px;}
+
+  /* SALES: SKU LINE ITEM PICKER */
+  .item-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap;}
+  .item-row input[list]{flex:2;min-width:160px;padding:8px 10px;border:1px solid var(--line);border-radius:3px;font-size:13px;}
+  .item-row input[type=number]{width:70px;padding:8px 10px;border:1px solid var(--line);border-radius:3px;font-size:13px;}
+  .add-item-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:7px 14px;border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:3px;cursor:pointer;}
+  .line-items-table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;}
+  .line-items-table th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;color:var(--ink-soft);padding:6px 8px;border-bottom:1px solid var(--line);}
+  .line-items-table td{padding:6px 8px;border-bottom:1px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:13px;}
+  .line-items-table .rm-line-btn{background:none;border:none;color:var(--pending);cursor:pointer;}
+  .order-total-line{text-align:right;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;margin:6px 0 16px;}
   @media (max-width:600px){.row2{grid-template-columns:1fr;} header{flex-direction:column;align-items:flex-start;gap:14px;}}
 </style>
 </head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <body>
 
 <div id="loginScreen" class="login-wrap">
@@ -153,16 +177,20 @@
     <div class="tabs">
       <button class="tab active" id="tabSales">Submit Order</button>
       <button class="tab" id="tabAdmin" style="display:none;">Admin Desk</button>
+      <button class="tab" id="tabProducts" style="display:none;">Products</button>
       <button class="logout-btn" id="logoutBtn">Log out</button>
     </div>
   </header>
   <div id="salesView"></div>
   <div id="adminView" style="display:none;"></div>
+  <div id="productsView" style="display:none;"></div>
 </div>
 
 <script>
 const API = '/api';
 let orders = [];
+let products = [];
+let lineItems = []; // items added to the current in-progress order via SKU picker
 let currentFilter = 'all';
 let authToken = localStorage.getItem('od_token') || null;
 let authRole = localStorage.getItem('od_role') || null;
@@ -207,13 +235,15 @@ document.getElementById('logoutBtn').onclick = () => {
   document.getElementById('loginScreen').style.display = 'flex';
 };
 
-function enterApp(){
+async function enterApp(){
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('mainApp').style.display = 'block';
   document.getElementById('roleLabel').textContent = authRole === 'admin' ? 'ADMIN VIEW' : 'SALES INTAKE';
   if(authRole === 'admin'){
     document.getElementById('tabAdmin').style.display = 'inline-block';
+    document.getElementById('tabProducts').style.display = 'inline-block';
   }
+  await loadProducts();
   renderSales();
 }
 
@@ -247,9 +277,31 @@ function renderSales(){
       <div class="field"><label>Your Email (for order updates)</label><input type="email" id="f_sales_email" placeholder="you@yourcompany.com"></div>
       <div class="row2">
         <div class="field"><label>Customer</label><input type="text" id="f_customer" placeholder="Customer / company name"></div>
-        <div class="field"><label>Order Amount (RM)</label><input type="text" id="f_amount" placeholder="0.00" inputmode="decimal"></div>
+        <div class="field">
+          <label>Customer Type (pricing tier)</label>
+          <select id="f_customer_type" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:3px;font-size:14px;">
+            <option value="original">Original Price</option>
+            <option value="doctor">Doctor's Price</option>
+            <option value="pharmacist">Pharmacist Price</option>
+          </select>
+        </div>
       </div>
-      <div class="field"><label>Items (SKU x Qty, one per line)</label><textarea id="f_items" placeholder="SKU-1023 x 12&#10;SKU-4410 x 5"></textarea></div>
+
+      <div class="field">
+        <label>Add Items from Catalog</label>
+        <div class="item-row">
+          <input type="text" id="f_sku_input" list="skuDatalist" placeholder="Search SKU or product name...">
+          <datalist id="skuDatalist"></datalist>
+          <input type="number" id="f_qty_input" min="1" value="1" placeholder="Qty">
+          <button type="button" class="add-item-btn" id="addLineBtn">+ Add</button>
+        </div>
+        <div id="lineItemsWrap"></div>
+      </div>
+
+      <div class="row2">
+        <div class="field"><label>Order Amount (RM) — auto-calculated, editable</label><input type="text" id="f_amount" placeholder="0.00" inputmode="decimal"></div>
+        <div class="field"><label>Items summary (auto-filled, editable)</label><textarea id="f_items" placeholder="Add items above, or type manually"></textarea></div>
+      </div>
       <div class="field"><label>Notes (optional)</label><textarea id="f_notes" style="min-height:44px;font-family:'Inter',sans-serif;" placeholder="Delivery instructions, special requests, etc."></textarea></div>
 
       <label class="followup-toggle">
@@ -266,6 +318,13 @@ function renderSales(){
     </div>
   `;
   document.getElementById('submitBtn').onclick = submitOrder;
+
+  lineItems = [];
+  populateSkuDatalist();
+  renderLineItems();
+  document.getElementById('addLineBtn').onclick = addLineItem;
+  document.getElementById('f_sku_input').addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); addLineItem(); } });
+  document.getElementById('f_customer_type').onchange = () => { recalcLineItemPrices(); renderLineItems(); };
 
   document.getElementById('f_followup_toggle').onchange = (e) => {
     const section = document.getElementById('followupSection');
@@ -288,6 +347,88 @@ function addFollowupRow(defaultDesc){
   `;
   row.querySelector('.rm-btn').onclick = () => row.remove();
   rows.appendChild(row);
+}
+
+function populateSkuDatalist(){
+  const list = document.getElementById('skuDatalist');
+  if(!list) return;
+  list.innerHTML = products.map(p => `<option value="${escapeHtml(p.sku)}">${escapeHtml(p.sku)} — ${escapeHtml(p.name||'')}</option>`).join('');
+}
+
+function addLineItem(){
+  const skuInput = document.getElementById('f_sku_input');
+  const qtyInput = document.getElementById('f_qty_input');
+  const skuVal = skuInput.value.trim();
+  const qty = parseInt(qtyInput.value) || 1;
+  if(!skuVal){ return; }
+
+  const product = findProduct(skuVal);
+  const tier = document.getElementById('f_customer_type').value;
+
+  if(!product){
+    // Not in catalog — still allow adding as a free-text line so sales isn't blocked.
+    lineItems.push({ sku: skuVal, name: '', qty, unitPrice: 0, inCatalog: false });
+  } else {
+    lineItems.push({ sku: product.sku, name: product.name, qty, unitPrice: priceForTier(product, tier), inCatalog: true });
+  }
+  skuInput.value = '';
+  qtyInput.value = '1';
+  renderLineItems();
+}
+
+function recalcLineItemPrices(){
+  const tier = document.getElementById('f_customer_type').value;
+  lineItems.forEach(li => {
+    if(li.inCatalog){
+      const product = findProduct(li.sku);
+      if(product) li.unitPrice = priceForTier(product, tier);
+    }
+  });
+}
+
+function removeLineItem(idx){
+  lineItems.splice(idx, 1);
+  renderLineItems();
+}
+
+function renderLineItems(){
+  const wrap = document.getElementById('lineItemsWrap');
+  if(!wrap) return;
+  if(lineItems.length === 0){
+    wrap.innerHTML = '<div class="ts" style="color:var(--ink-soft);margin-top:6px;">No items added yet.</div>';
+    syncItemsAndAmount();
+    return;
+  }
+  const total = lineItems.reduce((sum, li) => sum + (li.unitPrice * li.qty), 0);
+  wrap.innerHTML = `
+    <table class="line-items-table">
+      <tr><th>SKU</th><th>Name</th><th>Qty</th><th>Unit Price</th><th>Line Total</th><th></th></tr>
+      ${lineItems.map((li, idx) => `
+        <tr>
+          <td>${escapeHtml(li.sku)}${li.inCatalog ? '' : ' <span class="ts" style="color:var(--pending);">(not in catalog)</span>'}</td>
+          <td style="font-family:'Inter',sans-serif;">${escapeHtml(li.name)}</td>
+          <td>${li.qty}</td>
+          <td>RM ${li.unitPrice.toFixed(2)}</td>
+          <td>RM ${(li.unitPrice * li.qty).toFixed(2)}</td>
+          <td><button type="button" class="rm-line-btn" data-rmline="${idx}">×</button></td>
+        </tr>
+      `).join('')}
+    </table>
+    <div class="order-total-line">Order Total: RM ${total.toFixed(2)}</div>
+  `;
+  wrap.querySelectorAll('[data-rmline]').forEach(btn => {
+    btn.onclick = () => removeLineItem(parseInt(btn.dataset.rmline));
+  });
+  syncItemsAndAmount();
+}
+
+function syncItemsAndAmount(){
+  const itemsText = lineItems.map(li => `${li.sku} x ${li.qty} (RM ${li.unitPrice.toFixed(2)} each)`).join('\n');
+  const total = lineItems.reduce((sum, li) => sum + (li.unitPrice * li.qty), 0);
+  const itemsField = document.getElementById('f_items');
+  const amountField = document.getElementById('f_amount');
+  if(itemsField) itemsField.value = itemsText;
+  if(amountField && lineItems.length > 0) amountField.value = total.toFixed(2);
 }
 
 async function submitOrder(){
@@ -323,26 +464,28 @@ async function submitOrder(){
     document.getElementById('f_followup_toggle').checked = false;
     document.getElementById('followupSection').classList.remove('open');
     document.getElementById('followupRows').innerHTML = '';
+    lineItems = [];
+    renderLineItems();
     setTimeout(()=>{ confirm.style.display='none'; }, 5000);
   }catch(e){
     btn.disabled = false; btn.textContent = 'Submit Order to Admin';
   }
 }
 
-// ---------- ADMIN ----------
-document.getElementById('tabSales').onclick = () => {
-  document.getElementById('tabSales').classList.add('active');
-  document.getElementById('tabAdmin').classList.remove('active');
-  document.getElementById('salesView').style.display='block';
-  document.getElementById('adminView').style.display='none';
-};
-document.getElementById('tabAdmin').onclick = () => {
-  document.getElementById('tabAdmin').classList.add('active');
-  document.getElementById('tabSales').classList.remove('active');
-  document.getElementById('adminView').style.display='block';
-  document.getElementById('salesView').style.display='none';
-  renderAdmin();
-};
+// ---------- TABS ----------
+function showTab(which){
+  const tabs = { sales: 'tabSales', admin: 'tabAdmin', products: 'tabProducts' };
+  const views = { sales: 'salesView', admin: 'adminView', products: 'productsView' };
+  Object.keys(tabs).forEach(k => {
+    document.getElementById(tabs[k]).classList.toggle('active', k === which);
+    document.getElementById(views[k]).style.display = (k === which) ? 'block' : 'none';
+  });
+  if(which === 'admin') renderAdmin();
+  if(which === 'products') renderProducts();
+}
+document.getElementById('tabSales').onclick = () => showTab('sales');
+document.getElementById('tabAdmin').onclick = () => showTab('admin');
+document.getElementById('tabProducts').onclick = () => showTab('products');
 
 async function renderAdmin(){
   const el = document.getElementById('adminView');
@@ -557,6 +700,145 @@ async function renderAdmin(){
 }
 
 function escapeHtml(str){ const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+// ---------- PRODUCTS ----------
+async function loadProducts(){
+  try{ products = await apiFetch('/products'); }catch(e){ products = []; }
+}
+
+function findProduct(sku){
+  return products.find(p => p.sku.toLowerCase() === String(sku||'').trim().toLowerCase());
+}
+
+function priceForTier(product, tier){
+  if(!product) return 0;
+  if(tier === 'doctor') return Number(product.price_doctor) || 0;
+  if(tier === 'pharmacist') return Number(product.price_pharmacist) || 0;
+  return Number(product.price_original) || 0;
+}
+
+let parsedImportRows = [];
+
+function renderProducts(){
+  const el = document.getElementById('productsView');
+  el.innerHTML = `
+    <div class="upload-box">
+      <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">Upload SKU Catalog</div>
+      <div class="upload-hint">CSV or Excel (.xlsx). Columns: SKU, Name, Original Price, Doctor Price, Pharmacist Price</div>
+      <input type="file" id="catalogFile" accept=".csv,.xlsx,.xls">
+      <div id="importPreviewWrap"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">Current Catalog (${products.length})</div>
+      <button class="filter-btn" id="refreshCatalogBtn">↻ Refresh</button>
+    </div>
+    <input type="text" class="catalog-search" id="catalogSearch" placeholder="Search by SKU or name...">
+    <div id="catalogTableWrap"></div>
+  `;
+  document.getElementById('catalogFile').onchange = handleCatalogFile;
+  document.getElementById('refreshCatalogBtn').onclick = async () => { await loadProducts(); renderProducts(); };
+  document.getElementById('catalogSearch').oninput = (e) => renderCatalogTable(e.target.value);
+  renderCatalogTable('');
+}
+
+function renderCatalogTable(filter){
+  const wrap = document.getElementById('catalogTableWrap');
+  const f = (filter||'').toLowerCase();
+  const rows = products.filter(p => !f || p.sku.toLowerCase().includes(f) || (p.name||'').toLowerCase().includes(f));
+  if(rows.length === 0){ wrap.innerHTML = '<div class="empty">No products yet — upload a CSV or Excel file above.</div>'; return; }
+  wrap.innerHTML = `
+    <table class="catalog-table">
+      <tr><th>SKU</th><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th><th></th></tr>
+      ${rows.map(p => `
+        <tr>
+          <td>${escapeHtml(p.sku)}</td>
+          <td style="font-family:'Inter',sans-serif;">${escapeHtml(p.name||'')}</td>
+          <td>RM ${Number(p.price_original).toFixed(2)}</td>
+          <td>RM ${Number(p.price_doctor).toFixed(2)}</td>
+          <td>RM ${Number(p.price_pharmacist).toFixed(2)}</td>
+          <td><button class="del-sku-btn" data-delsku="${escapeHtml(p.sku)}">Remove</button></td>
+        </tr>
+      `).join('')}
+    </table>
+  `;
+  wrap.querySelectorAll('[data-delsku]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm(`Remove SKU "${btn.dataset.delsku}" from the catalog?`)) return;
+      try{ await apiFetch(`/products/${encodeURIComponent(btn.dataset.delsku)}`, { method:'DELETE' }); await loadProducts(); renderProducts(); }catch(e){ alert(e.message); }
+    };
+  });
+}
+
+function normalizeHeader(h){ return String(h||'').trim().toLowerCase().replace(/[^a-z]/g,''); }
+
+function mapRowToProduct(row){
+  const map = {};
+  Object.keys(row).forEach(k => { map[normalizeHeader(k)] = row[k]; });
+  const get = (...keys) => { for(const k of keys){ if(map[k] !== undefined) return map[k]; } return ''; };
+  return {
+    sku: String(get('sku','productcode','code')).trim(),
+    name: String(get('name','productname','description')).trim(),
+    priceOriginal: parseFloat(get('originalprice','price','retailprice')) || 0,
+    priceDoctor: parseFloat(get('doctorprice','doctorsprice','drprice')) || 0,
+    pricePharmacist: parseFloat(get('pharmacistprice','pharmacistsprice')) || 0
+  };
+}
+
+function handleCatalogFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  if(ext === 'csv'){
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: (results) => { parsedImportRows = results.data.map(mapRowToProduct).filter(p => p.sku); showImportPreview(); }
+    });
+  } else {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const wb = XLSX.read(evt.target.result, { type: 'binary' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      parsedImportRows = rows.map(mapRowToProduct).filter(p => p.sku);
+      showImportPreview();
+    };
+    reader.readAsBinaryString(file);
+  }
+}
+
+function showImportPreview(){
+  const wrap = document.getElementById('importPreviewWrap');
+  if(parsedImportRows.length === 0){
+    wrap.innerHTML = '<div class="ts" style="color:var(--pending);margin-top:12px;">No valid rows found. Check that your file has a SKU column.</div>';
+    return;
+  }
+  const preview = parsedImportRows.slice(0, 8);
+  wrap.innerHTML = `
+    <div style="text-align:left;margin-top:16px;">
+      <div class="ts" style="margin-bottom:8px;">Preview (${parsedImportRows.length} rows found, showing first ${preview.length}):</div>
+      <table class="preview-table">
+        <tr><th>SKU</th><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th></tr>
+        ${preview.map(p => `<tr><td>${escapeHtml(p.sku)}</td><td style="font-family:'Inter',sans-serif;">${escapeHtml(p.name)}</td><td>RM ${p.priceOriginal.toFixed(2)}</td><td>RM ${p.priceDoctor.toFixed(2)}</td><td>RM ${p.pricePharmacist.toFixed(2)}</td></tr>`).join('')}
+      </table>
+      <button class="confirm-upload-btn" id="confirmImportBtn">Upload ${parsedImportRows.length} products</button>
+    </div>
+  `;
+  document.getElementById('confirmImportBtn').onclick = async () => {
+    const btn = document.getElementById('confirmImportBtn');
+    btn.disabled = true; btn.textContent = 'Uploading...';
+    try{
+      const res = await apiFetch('/products/import', { method:'POST', body: JSON.stringify({ products: parsedImportRows }) });
+      await loadProducts();
+      parsedImportRows = [];
+      renderProducts();
+      alert(`Uploaded ${res.upserted} products successfully.`);
+    }catch(e){
+      alert(e.message || 'Import failed');
+      btn.disabled = false; btn.textContent = `Upload ${parsedImportRows.length} products`;
+    }
+  };
+}
 
 async function exportOrders(format){
   const params = new URLSearchParams();

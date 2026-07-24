@@ -86,8 +86,71 @@ password check for a real login lookup.
 | POST   | /api/orders     | any role    | Submit a new order                |
 | PATCH  | /api/orders/:id | admin only  | Update status/fulfillment/courier/tracking |
 | PATCH  | /api/orders/:id/followups/:fid | admin only | Mark a scheduled follow-up delivery pending/fulfilled |
+| POST   | /api/orders/:id/email-tracking | admin only | Email current tracking/shipment info to the salesperson on file |
+| POST   | /api/orders/:id/followups/:fid/email-reminder | admin only | Email a reminder about a scheduled follow-up to the salesperson |
+| GET    | /api/products | any role | List the SKU catalog |
+| POST   | /api/products/import | admin only | Bulk upload/update products from a parsed CSV or Excel file |
+| DELETE | /api/products/:sku | admin only | Remove a single SKU from the catalog |
 | GET    | /api/orders/export.csv  | admin only | Download orders as CSV. Optional query params: `status`, `fulfillment`, `from`, `to` |
 | GET    | /api/orders/export.xlsx | admin only | Download orders as a formatted Excel file. Same optional query params |
+
+## SKU catalog & tiered pricing
+
+Admin has a **Products** tab (visible only to Admin) for managing your SKU catalog:
+
+- **Upload a CSV or Excel file** with columns: `SKU`, `Name`, `Original Price`, `Doctor Price`, `Pharmacist Price` (header names are matched flexibly — e.g. "Doctor's Price" or "DR Price" both work).
+- Uploading is an **upsert**: existing SKUs get updated, new ones get added. Nothing is deleted unless you remove it individually.
+- A preview table shows what will be imported before you confirm.
+
+**On the Sales side**, the order form now has:
+- A **Customer Type** selector (Original / Doctor / Pharmacist) — this determines which price tier is used
+- A **SKU picker** with autocomplete against the catalog — search by SKU or product name, set quantity, click Add
+- Each added item shows its price for the selected tier automatically; changing Customer Type recalculates all added items
+- The traditional "Items summary" and "Order Amount" fields are auto-filled from what's picked, but remain editable by hand for one-off items not yet in the catalog
+
+
+
+## Email notifications
+
+Admin can send two kinds of email straight from the Admin Desk, using
+your company's own email address as the sender:
+
+- **"Email to sales"** — appears once an order is marked Shipped with
+  courier/tracking filled in. Sends the salesperson the tracking info.
+- **"Send reminder"** — appears next to each pending scheduled
+  delivery. Sends the salesperson a reminder of what's due and when.
+
+Both require the salesperson to have entered their email when
+submitting the order (a field on the Sales tab). If it's missing,
+the buttons won't appear for that order.
+
+### Setting up email sending
+
+Email is **off by default** until you configure SMTP credentials.
+Add these variables in Railway (Variables tab) or your local `.env`:
+
+| Variable | Purpose |
+|---|---|
+| `SMTP_HOST` | Your mail server, e.g. `smtp.gmail.com` or `smtp.office365.com` |
+| `SMTP_PORT` | Usually `587` |
+| `SMTP_SECURE` | `false` for port 587 (STARTTLS), `true` for port 465 |
+| `SMTP_USER` | Your company email address |
+| `SMTP_PASS` | App password (see below) — not your normal login password |
+| `SMTP_FROM` | The "from" address shown to recipients (usually same as `SMTP_USER`) |
+
+**Google Workspace / Gmail:** you need an "App Password," not your
+regular password. Generate one at
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+(requires 2-Step Verification to be turned on first).
+
+**Microsoft 365 / Outlook:** use `smtp.office365.com`, port `587`. If
+your organization enforces modern auth / MFA, you may similarly need
+an app password from your Microsoft 365 admin settings rather than
+your normal password.
+
+Once these are set in Railway, redeploy (or it will pick them up on
+the next deploy) — the server logs `Email sending enabled via ...`
+on startup once it detects valid SMTP settings.
 
 ## Split / scheduled deliveries
 
@@ -117,5 +180,3 @@ can pull something like "all Paid orders shipped in June" in two clicks.
 
 - **CSV** — universal, opens in Excel/Sheets/Numbers, good for quick pulls or feeding into other tools.
 - **Excel (.xlsx)** — proper formatted spreadsheet with bold headers and auto-filter dropdowns already turned on, ready to hand to an accountant or manager.
-
-

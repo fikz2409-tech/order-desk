@@ -362,6 +362,58 @@ app.post('/api/orders/:id/followups/:fid/email-reminder', checkAuth, requireAdmi
   res.json({ ok: true });
 });
 
+// Any signed-in role can read the catalog (sales needs it to build orders).
+app.get('/api/products', checkAuth, async (req, res) => {
+  const result = await pool.query('SELECT * FROM products ORDER BY sku ASC');
+  res.json(result.rows);
+});
+
+// Admin bulk-imports/upserts the SKU catalog from a parsed CSV/Excel file.
+// Body: { products: [{ sku, name, priceOriginal, priceDoctor, pricePharmacist }] }
+app.post('/api/products/import', checkAuth, requireAdmin, async (req, res) => {
+  const { products } = req.body || {};
+  if (!Array.isArray(products) || products.length === 0) {
+    return res.status(400).json({ error: 'No products provided' });
+  }
+
+  const clean = products
+    .map(p => ({
+      sku: String(p.sku || '').trim(),
+      name: String(p.name || '').trim(),
+      priceOriginal: Number(p.priceOriginal) || 0,
+      priceDoctor: Number(p.priceDoctor) || 0,
+      pricePharmacist: Number(p.pricePharmacist) || 0
+    }))
+    .filter(p => p.sku);
+
+  if (clean.length === 0) {
+    return res.status(400).json({ error: 'No valid rows found — check that each row has a SKU' });
+  }
+
+  let upserted = 0;
+  for (const p of clean) {
+    await pool.query(
+      `INSERT INTO products (sku, name, price_original, price_doctor, price_pharmacist, updated_at)
+       VALUES ($1,$2,$3,$4,$5, now())
+       ON CONFLICT (sku) DO UPDATE SET
+         name = EXCLUDED.name,
+         price_original = EXCLUDED.price_original,
+         price_doctor = EXCLUDED.price_doctor,
+         price_pharmacist = EXCLUDED.price_pharmacist,
+         updated_at = now()`,
+      [p.sku, p.name, p.priceOriginal, p.priceDoctor, p.pricePharmacist]
+    );
+    upserted++;
+  }
+
+  res.json({ ok: true, upserted, total: clean.length });
+});
+
+app.delete('/api/products/:sku', checkAuth, requireAdmin, async (req, res) => {
+  await pool.query('DELETE FROM products WHERE sku=$1', [req.params.sku]);
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3000;

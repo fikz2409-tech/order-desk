@@ -29,6 +29,18 @@ async function init() {
   // Safe to run every startup: adds columns if this table pre-dates them.
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS follow_ups JSONB DEFAULT '[]';`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS salesperson_email TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_emailed BOOLEAN DEFAULT false;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS products (
+      sku TEXT PRIMARY KEY,
+      name TEXT DEFAULT '',
+      price_original NUMERIC DEFAULT 0,
+      price_doctor NUMERIC DEFAULT 0,
+      price_pharmacist NUMERIC DEFAULT 0,
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+  `);
   console.log('Database ready.');
 }
 
