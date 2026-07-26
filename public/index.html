@@ -182,12 +182,14 @@
     </div>
     <div class="tabs">
       <button class="tab active" id="tabSales">Submit Order</button>
+      <button class="tab" id="tabTrack" style="display:none;">Track Orders</button>
       <button class="tab" id="tabAdmin" style="display:none;">Admin Desk</button>
       <button class="tab" id="tabProducts" style="display:none;">Products</button>
       <button class="logout-btn" id="logoutBtn">Log out</button>
     </div>
   </header>
   <div id="salesView"></div>
+  <div id="trackView" style="display:none;"></div>
   <div id="adminView" style="display:none;"></div>
   <div id="productsView" style="display:none;"></div>
 </div>
@@ -248,6 +250,8 @@ async function enterApp(){
   if(authRole === 'admin'){
     document.getElementById('tabAdmin').style.display = 'inline-block';
     document.getElementById('tabProducts').style.display = 'inline-block';
+  } else {
+    document.getElementById('tabTrack').style.display = 'inline-block';
   }
   await loadProducts();
   renderSales();
@@ -485,18 +489,84 @@ async function submitOrder(){
 
 // ---------- TABS ----------
 function showTab(which){
-  const tabs = { sales: 'tabSales', admin: 'tabAdmin', products: 'tabProducts' };
-  const views = { sales: 'salesView', admin: 'adminView', products: 'productsView' };
+  const tabs = { sales: 'tabSales', track: 'tabTrack', admin: 'tabAdmin', products: 'tabProducts' };
+  const views = { sales: 'salesView', track: 'trackView', admin: 'adminView', products: 'productsView' };
   Object.keys(tabs).forEach(k => {
     document.getElementById(tabs[k]).classList.toggle('active', k === which);
     document.getElementById(views[k]).style.display = (k === which) ? 'block' : 'none';
   });
+  if(which === 'track') renderTrackOrders();
   if(which === 'admin') renderAdmin();
   if(which === 'products') renderProducts();
 }
 document.getElementById('tabSales').onclick = () => showTab('sales');
+document.getElementById('tabTrack').onclick = () => showTab('track');
 document.getElementById('tabAdmin').onclick = () => showTab('admin');
 document.getElementById('tabProducts').onclick = () => showTab('products');
+
+// ---------- TRACK ORDERS (read-only, for Sales) ----------
+let trackFilter = 'all';
+
+async function renderTrackOrders(){
+  const el = document.getElementById('trackView');
+  el.innerHTML = '<div class="loading">Loading orders…</div>';
+  let list;
+  try{ list = await apiFetch('/orders'); }catch(e){ return; }
+
+  const counts = { pending:0, processing:0, paid:0 };
+  list.forEach(o => { if(counts[o.status]!==undefined) counts[o.status]++; });
+
+  let filtered = list;
+  if(trackFilter !== 'all') filtered = list.filter(o => o.status === trackFilter);
+
+  el.innerHTML = `
+    <div class="counts">
+      <div class="count-item"><span class="dot status-pending"></span>${counts.pending} Pending</div>
+      <div class="count-item"><span class="dot status-processing"></span>${counts.processing} Processing</div>
+      <div class="count-item"><span class="dot status-paid"></span>${counts.paid} Paid</div>
+    </div>
+    <div class="filters">
+      <button class="filter-btn ${trackFilter==='all'?'active':''}" data-tf="all">All (${list.length})</button>
+      <button class="filter-btn ${trackFilter==='pending'?'active':''}" data-tf="pending">Pending</button>
+      <button class="filter-btn ${trackFilter==='processing'?'active':''}" data-tf="processing">Processing</button>
+      <button class="filter-btn ${trackFilter==='paid'?'active':''}" data-tf="paid">Paid</button>
+      <button class="filter-btn" id="refreshTrackBtn" style="margin-left:auto;">↻ Refresh</button>
+    </div>
+    <div id="trackListWrap"></div>
+  `;
+  el.querySelectorAll('[data-tf]').forEach(b => { b.onclick = () => { trackFilter = b.dataset.tf; renderTrackOrders(); }; });
+  document.getElementById('refreshTrackBtn').onclick = () => renderTrackOrders();
+
+  const wrap = document.getElementById('trackListWrap');
+  if(filtered.length === 0){ wrap.innerHTML = '<div class="empty">No orders here yet.</div>'; return; }
+
+  wrap.innerHTML = filtered.map(o => `
+    <div class="order-card status-${o.status}">
+      <div class="order-main">
+        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}</div>
+        <div class="order-customer">${escapeHtml(o.customer)}</div>
+        <div class="order-items">${escapeHtml(o.items)}</div>
+        <div class="order-meta">
+          <span>Sales: ${escapeHtml(o.salesperson)}</span>
+          ${o.amount ? `<span>RM ${escapeHtml(o.amount)}</span>` : ''}
+          <span>${new Date(o.created_at).toLocaleString()}</span>
+        </div>
+        ${(o.courier || o.tracking) ? `<div class="order-meta">📦 ${escapeHtml(o.courier||'Courier TBC')} — AWB ${escapeHtml(o.tracking||'TBC')}</div>` : ''}
+        ${(o.follow_ups && o.follow_ups.length) ? `
+          <div class="followup-block">
+            <div class="ts" style="color:var(--ink-soft);margin-bottom:4px;">Scheduled deliveries</div>
+            ${o.follow_ups.map(fu => `<div class="ts" style="margin-bottom:3px;">${fu.status==='fulfilled' ? '✓' : '○'} ${escapeHtml(fu.description)}${fu.dueDate ? ' — ' + fu.dueDate : ''}</div>`).join('')}
+          </div>` : ''}
+      </div>
+      <div class="order-actions">
+        <div class="badges-row">
+          <span class="badge status-${o.status}">${o.status}</span>
+          <span class="badge ship-${o.fulfillment||'notpacked'}">${(o.fulfillment||'notpacked')==='notpacked'?'not packed':o.fulfillment}</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
 
 async function renderAdmin(){
   const el = document.getElementById('adminView');
