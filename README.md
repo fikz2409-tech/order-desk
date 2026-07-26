@@ -86,6 +86,9 @@ password check for a real login lookup.
 | POST   | /api/orders     | any role    | Submit a new order                |
 | PATCH  | /api/orders/:id | admin only  | Update status/fulfillment/courier/tracking |
 | PATCH  | /api/orders/:id/followups/:fid | admin only | Mark a scheduled follow-up delivery pending/fulfilled |
+| POST   | /api/orders/:id/po-attachment | admin only | Upload/replace the PO document attached to an order |
+| GET    | /api/orders/:id/po-attachment | any role | Download the attached PO document |
+| DELETE | /api/orders/:id/po-attachment | admin only | Remove the attached PO document |
 | POST   | /api/orders/:id/email-tracking | admin only | Email current tracking/shipment info to the salesperson on file |
 | POST   | /api/orders/:id/followups/:fid/email-reminder | admin only | Email a reminder about a scheduled follow-up to the salesperson |
 | GET    | /api/products | any role | List the SKU catalog |
@@ -126,31 +129,34 @@ the buttons won't appear for that order.
 
 ### Setting up email sending
 
-Email is **off by default** until you configure SMTP credentials.
+Email is **off by default** until configured. This app sends via
+**Brevo's HTTPS API**, not SMTP — Railway blocks outbound SMTP ports
+(25/465/587) on Free/Trial/Hobby plans, but never blocks standard
+HTTPS traffic, so this works on any Railway plan without upgrading.
+
 Add these variables in Railway (Variables tab) or your local `.env`:
 
 | Variable | Purpose |
 |---|---|
-| `SMTP_HOST` | Your mail server, e.g. `smtp.gmail.com` or `smtp.office365.com` |
-| `SMTP_PORT` | Usually `587` |
-| `SMTP_SECURE` | `false` for port 587 (STARTTLS), `true` for port 465 |
-| `SMTP_USER` | Your company email address |
-| `SMTP_PASS` | App password (see below) — not your normal login password |
-| `SMTP_FROM` | The "from" address shown to recipients (usually same as `SMTP_USER`) |
+| `BREVO_API_KEY` | API key from Brevo (not the SMTP key — see below) |
+| `SENDER_EMAIL` | The verified sender address, e.g. `orders@yourcompany.com` |
+| `SENDER_NAME` | Display name recipients see, e.g. `Order Desk` |
 
-**Google Workspace / Gmail:** you need an "App Password," not your
-regular password. Generate one at
-[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-(requires 2-Step Verification to be turned on first).
+**Setup steps:**
+1. Sign up free at [brevo.com](https://www.brevo.com) (free tier: 300 emails/day)
+2. Verify your sending domain: **Senders, Domains & Dedicated IPs** → **Domains** → add your domain → add the DNS records Brevo gives you at your domain registrar → click Verify (DNS changes can take minutes to hours to propagate)
+3. Add a sender on that verified domain: **Senders, Domains & Dedicated IPs** → **Senders** → add e.g. `orders@yourcompany.com`
+4. Generate an API key: account menu → **Settings** → **SMTP & API** → **API Keys** → **Generate a new API key**. Leave **"Create MCP server API key" unchecked** — that's an unrelated key type for connecting AI assistants to Brevo, not for sending app emails.
+5. Copy the key (starts with `xkeysib-...`) into `BREVO_API_KEY`
 
-**Microsoft 365 / Outlook:** use `smtp.office365.com`, port `587`. If
-your organization enforces modern auth / MFA, you may similarly need
-an app password from your Microsoft 365 admin settings rather than
-your normal password.
+Once set in Railway, redeploy — the server logs
+`Email sending enabled via Brevo API, sender: ...` on startup once
+it detects valid credentials.
 
-Once these are set in Railway, redeploy (or it will pick them up on
-the next deploy) — the server logs `Email sending enabled via ...`
-on startup once it detects valid SMTP settings.
+**Note:** using a free Gmail/Outlook address as `SENDER_EMAIL` instead
+of a verified domain will trigger Brevo's "Not Compliant" warning and
+hurt deliverability (may land in spam). Verifying your own domain, as
+in step 2, avoids this.
 
 ## Split / scheduled deliveries
 
@@ -170,6 +176,15 @@ For customers who buy stock in bulk but want it released in batches
 - Pending follow-ups also appear in the CSV/Excel export as a
   "Pending Follow-ups" column, so you can report on what's still owed
   to customers.
+
+## Purchase Orders (PO)
+
+For customers who order against a PO:
+
+- Sales can optionally enter a **PO Number** when submitting an order
+- Admin can also add/edit the PO Number later directly on the order card, and it's shown next to the Order ID once set
+- Admin can **attach the actual PO document** (PDF or image, up to 6MB) to any order — click the file picker on the order card. Once attached, the card shows the filename with **Download** and **Remove** buttons instead of the upload field
+- The PO Number and whether a document is attached both appear in the CSV/Excel exports
 
 ## Report exports
 

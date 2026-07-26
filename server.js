@@ -7,7 +7,7 @@ const { pool, init } = require('./db');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '8mb' })); // raised to allow base64-encoded PO document attachments
 app.use(express.static(path.join(__dirname, 'public')));
 
 const SALES_PASSWORD = process.env.SALES_PASSWORD || 'sales123';
@@ -91,7 +91,16 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/orders', checkAuth, async (req, res) => {
-  const result = await pool.query('SELECT * FROM orders ORDER BY created_at DESC');
+  // Excludes po_file_data (base64 file content) from the list to keep this
+  // fast — the full attachment is only fetched on demand via the download
+  // endpoint, not loaded into memory every time the order list refreshes.
+  const result = await pool.query(`
+    SELECT id, salesperson, salesperson_email, customer, amount, items, notes,
+           status, fulfillment, courier, tracking, history, follow_ups,
+           tracking_emailed, po_number, po_file_name, po_file_type, created_at,
+           (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment
+    FROM orders ORDER BY created_at DESC
+  `);
   res.json(result.rows);
 });
 
@@ -105,11 +114,16 @@ function buildFilterQuery(query) {
   if (from) { params.push(from); clauses.push(`created_at >= $${params.length}`); }
   if (to) { params.push(to); clauses.push(`created_at <= $${params.length}`); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  return { text: `SELECT * FROM orders ${where} ORDER BY created_at DESC`, params };
+  const cols = `id, salesperson, salesperson_email, customer, amount, items, notes,
+    status, fulfillment, courier, tracking, history, follow_ups, po_number,
+    po_file_name, (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment, created_at`;
+  return { text: `SELECT ${cols} FROM orders ${where} ORDER BY created_at DESC`, params };
 }
 
 const EXPORT_COLUMNS = [
   { header: 'Order ID', key: 'id', width: 16 },
+  { header: 'PO Number', key: 'po_number', width: 16 },
+  { header: 'PO Attached', key: 'poAttachedLabel', width: 12 },
   { header: 'Customer', key: 'customer', width: 24 },
   { header: 'Salesperson', key: 'salesperson', width: 18 },
   { header: 'Items', key: 'items', width: 34 },
@@ -142,7 +156,7 @@ app.get('/api/orders/export.csv', checkAuth, requireAdmin, async (req, res) => {
   const result = await pool.query(text, params);
   const headerRow = EXPORT_COLUMNS.map(c => csvEscape(c.header)).join(',');
   const rows = result.rows.map(o => {
-    const rowData = { ...o, followUpsSummary: summarizeFollowUps(o.follow_ups) };
+    const rowData = { ...o, followUpsSummary: summarizeFollowUps(o.follow_ups), poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No' };
     return EXPORT_COLUMNS.map(c => csvEscape(c.key === 'created_at' ? new Date(rowData[c.key]).toLocaleString() : rowData[c.key])).join(',');
   });
   const csv = [headerRow, ...rows].join('\r\n');
@@ -164,6 +178,8 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
   result.rows.forEach(o => {
     sheet.addRow({
       id: o.id,
+      po_number: o.po_number,
+      poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No',
       customer: o.customer,
       salesperson: o.salesperson,
       items: o.items,
@@ -186,7 +202,7 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
 });
 
 app.post('/api/orders', checkAuth, async (req, res) => {
-  const { salesperson, salespersonEmail, customer, amount, items, notes, followUps } = req.body || {};
+  const { salesperson, salespersonEmail, customer, amount, items, notes, followUps, poNumber } = req.body || {};
   if (!salesperson || !customer || !items) {
     return res.status(400).json({ error: 'salesperson, customer, and items are required' });
   }
@@ -209,9 +225,9 @@ app.post('/api/orders', checkAuth, async (req, res) => {
   }
 
   await pool.query(
-    `INSERT INTO orders (id, salesperson, salesperson_email, customer, amount, items, notes, history, follow_ups)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [id, salesperson, salespersonEmail || '', customer, amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps)]
+    `INSERT INTO orders (id, salesperson, salesperson_email, customer, amount, items, notes, history, follow_ups, po_number)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [id, salesperson, salespersonEmail || '', customer, amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim()]
   );
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.status(201).json(result.rows[0]);
@@ -220,7 +236,7 @@ app.post('/api/orders', checkAuth, async (req, res) => {
 // Only admin can update order status/fulfillment/courier/tracking.
 app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { status, fulfillment, courier, tracking } = req.body || {};
+  const { status, fulfillment, courier, tracking, poNumber } = req.body || {};
 
   const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
@@ -239,6 +255,9 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
   if (tracking !== undefined && tracking !== order.tracking) {
     history.push({ ts: new Date().toISOString(), text: `Tracking number set to "${tracking}"` });
   }
+  if (poNumber !== undefined && poNumber !== order.po_number) {
+    history.push({ ts: new Date().toISOString(), text: `PO number set to "${poNumber}"` });
+  }
 
   await pool.query(
     `UPDATE orders
@@ -246,9 +265,10 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
          fulfillment = COALESCE($2, fulfillment),
          courier = COALESCE($3, courier),
          tracking = COALESCE($4, tracking),
-         history = $5
-     WHERE id = $6`,
-    [status, fulfillment, courier, tracking, JSON.stringify(history), id]
+         po_number = COALESCE($5, po_number),
+         history = $6
+     WHERE id = $7`,
+    [status, fulfillment, courier, tracking, poNumber, JSON.stringify(history), id]
   );
 
   // Auto-send: once an order is Shipped with courier + tracking present,
@@ -259,16 +279,17 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
     && (refreshed.courier || refreshed.tracking)
     && refreshed.salesperson_email
     && !refreshed.tracking_emailed
-    && mailer;
+    && BREVO_API_KEY && SENDER_EMAIL;
 
   if (readyToNotify) {
     const text = [
       `Order ${refreshed.id} for ${refreshed.customer}`,
+      refreshed.po_number ? `PO: ${refreshed.po_number}` : null,
       `Payment status: ${refreshed.status}`,
       `Fulfillment: ${refreshed.fulfillment}`,
       `Courier: ${refreshed.courier || 'TBC'}`,
       `Tracking / AWB: ${refreshed.tracking || 'TBC'}`
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     try {
       await sendMail({ to: refreshed.salesperson_email, subject: `Order ${refreshed.id} — shipped`, text });
       const newHistory = refreshed.history || [];
@@ -286,6 +307,60 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
 });
 
 // Admin toggles a single follow-up delivery's status (pending <-> fulfilled)
+const MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024; // ~6MB raw file (base64 adds ~33% on top, kept under the 8mb JSON body limit)
+
+// Admin uploads/replaces the PO document attached to an order.
+// Body: { fileName, fileType, dataBase64 } — dataBase64 is the raw
+// base64 content (no "data:...;base64," prefix — stripped client-side).
+app.post('/api/orders/:id/po-attachment', checkAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { fileName, fileType, dataBase64 } = req.body || {};
+  if (!fileName || !dataBase64) return res.status(400).json({ error: 'No file provided' });
+
+  const approxBytes = Math.ceil((dataBase64.length * 3) / 4);
+  if (approxBytes > MAX_ATTACHMENT_BYTES) {
+    return res.status(400).json({ error: 'File too large — please keep PO attachments under 6MB' });
+  }
+
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const order = existing.rows[0];
+  const history = order.history || [];
+  history.push({ ts: new Date().toISOString(), text: `PO document attached: ${fileName}` });
+
+  await pool.query(
+    'UPDATE orders SET po_file_name=$1, po_file_type=$2, po_file_data=$3, history=$4 WHERE id=$5',
+    [fileName, fileType || 'application/octet-stream', dataBase64, JSON.stringify(history), id]
+  );
+  res.json({ ok: true });
+});
+
+// Streams the PO attachment back as a real file download.
+app.get('/api/orders/:id/po-attachment', checkAuth, async (req, res) => {
+  const result = await pool.query('SELECT po_file_name, po_file_type, po_file_data FROM orders WHERE id=$1', [req.params.id]);
+  if (result.rows.length === 0 || !result.rows[0].po_file_data) {
+    return res.status(404).json({ error: 'No PO attachment for this order' });
+  }
+  const { po_file_name, po_file_type, po_file_data } = result.rows[0];
+  const buffer = Buffer.from(po_file_data, 'base64');
+  res.setHeader('Content-Type', po_file_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${po_file_name}"`);
+  res.send(buffer);
+});
+
+app.delete('/api/orders/:id/po-attachment', checkAuth, requireAdmin, async (req, res) => {
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [req.params.id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const order = existing.rows[0];
+  const history = order.history || [];
+  history.push({ ts: new Date().toISOString(), text: `PO document removed: ${order.po_file_name}` });
+  await pool.query(
+    `UPDATE orders SET po_file_name='', po_file_type='', po_file_data='', history=$1 WHERE id=$2`,
+    [JSON.stringify(history), req.params.id]
+  );
+  res.json({ ok: true });
+});
+
 app.patch('/api/orders/:id/followups/:fid', checkAuth, requireAdmin, async (req, res) => {
   const { id, fid } = req.params;
   const { status } = req.body || {};
@@ -319,6 +394,7 @@ app.post('/api/orders/:id/email-tracking', checkAuth, requireAdmin, async (req, 
 
   const text = [
     `Order ${o.id} for ${o.customer}`,
+    o.po_number ? `PO: ${o.po_number}` : null,
     `Payment status: ${o.status}`,
     `Fulfillment: ${o.fulfillment}`,
     `Courier: ${o.courier || 'TBC'}`,
@@ -411,6 +487,43 @@ app.post('/api/products/import', checkAuth, requireAdmin, async (req, res) => {
   }
 
   res.json({ ok: true, upserted, total: clean.length });
+});
+
+app.get('/api/products/export.xlsx', checkAuth, requireAdmin, async (req, res) => {
+  const result = await pool.query('SELECT * FROM products ORDER BY sku ASC');
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('SKU Catalog');
+  sheet.columns = [
+    { header: 'SKU', key: 'sku', width: 16 },
+    { header: 'Name', key: 'name', width: 34 },
+    { header: 'Original Price', key: 'price_original', width: 16 },
+    { header: 'Doctor Price', key: 'price_doctor', width: 16 },
+    { header: 'Pharmacist Price', key: 'price_pharmacist', width: 16 },
+    { header: 'Last Updated', key: 'updated_at', width: 20 }
+  ];
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEFEF' } };
+
+  result.rows.forEach(p => {
+    sheet.addRow({
+      sku: p.sku,
+      name: p.name,
+      price_original: Number(p.price_original),
+      price_doctor: Number(p.price_doctor),
+      price_pharmacist: Number(p.price_pharmacist),
+      updated_at: new Date(p.updated_at).toLocaleString()
+    });
+  });
+  ['C', 'D', 'E'].forEach(col => {
+    sheet.getColumn(col).numFmt = '"RM"#,##0.00';
+  });
+  sheet.autoFilter = { from: 'A1', to: 'F1' };
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="sku-catalog-${Date.now()}.xlsx"`);
+  await workbook.xlsx.write(res);
+  res.end();
 });
 
 app.delete('/api/products/:sku', checkAuth, requireAdmin, async (req, res) => {

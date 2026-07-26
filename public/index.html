@@ -81,6 +81,12 @@
   .fulfill-block{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);width:100%;}
   .fulfill-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
   .fulfill-row input{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;flex:1;min-width:120px;}
+
+  .po-attach-row{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;}
+  .po-file-input{font-family:'IBM Plex Mono',monospace;font-size:11px;max-width:200px;}
+  .po-download-btn, .po-remove-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer;background:#fff;}
+  .po-download-btn{border:1px solid var(--processing);color:var(--processing);}
+  .po-remove-btn{border:1px solid var(--pending);color:var(--pending);}
   .badges-row{display:flex;gap:6px;flex-wrap:wrap;}
   .history-toggle{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);background:none;border:none;text-decoration:underline;cursor:pointer;padding:0;margin-top:8px;}
   .history-list{margin-top:8px;padding-left:12px;border-left:2px solid var(--line);display:none;}
@@ -277,6 +283,9 @@ function renderSales(){
       <div class="field"><label>Your Email (for order updates)</label><input type="email" id="f_sales_email" placeholder="you@yourcompany.com"></div>
       <div class="row2">
         <div class="field"><label>Customer</label><input type="text" id="f_customer" placeholder="Customer / company name"></div>
+        <div class="field"><label>PO Number (if applicable)</label><input type="text" id="f_po_number" placeholder="e.g. PO-2026-0456"></div>
+      </div>
+      <div class="row2">
         <div class="field">
           <label>Customer Type (pricing tier)</label>
           <select id="f_customer_type" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:3px;font-size:14px;">
@@ -438,6 +447,7 @@ async function submitOrder(){
   const amount = document.getElementById('f_amount').value.trim();
   const items = document.getElementById('f_items').value.trim();
   const notes = document.getElementById('f_notes').value.trim();
+  const poNumber = document.getElementById('f_po_number').value.trim();
   if(!sales || !customer || !items){ alert('Please fill in salesperson, customer, and items at minimum.'); return; }
 
   let followUps = [];
@@ -452,7 +462,7 @@ async function submitOrder(){
   btn.disabled = true; btn.textContent = 'Submitting...';
 
   try{
-    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, amount, items, notes, followUps }) });
+    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, amount, items, notes, followUps, poNumber }) });
     btn.disabled = false; btn.textContent = 'Submit Order to Admin';
     const confirm = document.getElementById('confirmMsg');
     confirm.style.display = 'block';
@@ -461,6 +471,7 @@ async function submitOrder(){
     document.getElementById('f_amount').value='';
     document.getElementById('f_items').value='';
     document.getElementById('f_notes').value='';
+    document.getElementById('f_po_number').value='';
     document.getElementById('f_followup_toggle').checked = false;
     document.getElementById('followupSection').classList.remove('open');
     document.getElementById('followupRows').innerHTML = '';
@@ -560,7 +571,7 @@ async function renderAdmin(){
   list.innerHTML = filtered.map(o => `
     <div class="order-card status-${o.status}">
       <div class="order-main">
-        <div class="order-id">${o.id}</div>
+        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}</div>
         <div class="order-customer">${escapeHtml(o.customer)}</div>
         <div class="order-items">${escapeHtml(o.items)}</div>
         <div class="order-meta">
@@ -570,6 +581,17 @@ async function renderAdmin(){
         </div>
         ${o.notes ? `<div class="order-meta">Note: ${escapeHtml(o.notes)}</div>` : ''}
         <div class="fulfill-block">
+          <div class="fulfill-row">
+            <input type="text" class="po-input" data-id="${o.id}" placeholder="PO Number (if applicable)" value="${escapeHtml(o.po_number||'')}">
+          </div>
+          <div class="po-attach-row">
+            ${o.has_po_attachment
+              ? `<span class="ts" style="color:var(--paid);">📎 ${escapeHtml(o.po_file_name||'PO document')}</span>
+                 <button type="button" class="po-download-btn" data-podownload="${o.id}">Download</button>
+                 <button type="button" class="po-remove-btn" data-poremove="${o.id}">Remove</button>`
+              : `<input type="file" class="po-file-input" data-poupload="${o.id}" accept=".pdf,.jpg,.jpeg,.png">
+                 <span class="ts" style="color:var(--ink-soft);">Attach PO document (PDF/image, max 6MB)</span>`}
+          </div>
           <div class="fulfill-row">
             <input type="text" class="courier-input" data-id="${o.id}" placeholder="Courier (e.g. J&T)" value="${escapeHtml(o.courier||'')}">
             <input type="text" class="tracking-input" data-id="${o.id}" placeholder="Tracking / AWB number" value="${escapeHtml(o.tracking||'')}">
@@ -632,11 +654,60 @@ async function renderAdmin(){
     };
   });
 
-  list.querySelectorAll('.courier-input, .tracking-input').forEach(inp => {
+  list.querySelectorAll('.courier-input, .tracking-input, .po-input').forEach(inp => {
     inp.onchange = async (e) => {
       const id = e.target.dataset.id;
-      const field = e.target.classList.contains('courier-input') ? 'courier' : 'tracking';
+      let field = 'tracking';
+      if(e.target.classList.contains('courier-input')) field = 'courier';
+      else if(e.target.classList.contains('po-input')) field = 'poNumber';
       try{ await apiFetch(`/orders/${id}`, { method:'PATCH', body: JSON.stringify({ [field]: e.target.value }) }); renderAdmin(); }catch(e){}
+    };
+  });
+
+  list.querySelectorAll('.po-file-input').forEach(inp => {
+    inp.onchange = async (e) => {
+      const id = e.target.dataset.poupload;
+      const file = e.target.files[0];
+      if(!file) return;
+      if(file.size > 6 * 1024 * 1024){ alert('File too large — please keep PO attachments under 6MB.'); e.target.value = ''; return; }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1]; // strip the "data:...;base64," prefix
+        try{
+          await apiFetch(`/orders/${id}/po-attachment`, {
+            method:'POST',
+            body: JSON.stringify({ fileName: file.name, fileType: file.type, dataBase64: base64 })
+          });
+          renderAdmin();
+        }catch(err){ alert(err.message || 'Upload failed'); }
+      };
+      reader.readAsDataURL(file);
+    };
+  });
+
+  list.querySelectorAll('[data-podownload]').forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.podownload;
+      try{
+        const res = await fetch(`${API}/orders/${id}/po-attachment`, { headers: { 'Authorization': 'Bearer ' + authToken } });
+        if(!res.ok) throw new Error('Download failed');
+        const blob = await res.blob();
+        const disposition = res.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="(.+)"/);
+        const filename = match ? match[1] : 'PO-document';
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        window.URL.revokeObjectURL(url);
+      }catch(err){ alert('Could not download PO document.'); }
+    };
+  });
+
+  list.querySelectorAll('[data-poremove]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('Remove the attached PO document from this order?')) return;
+      try{ await apiFetch(`/orders/${btn.dataset.poremove}/po-attachment`, { method:'DELETE' }); renderAdmin(); }catch(err){ alert(err.message); }
     };
   });
 
@@ -690,7 +761,7 @@ async function renderAdmin(){
     btn.onclick = () => {
       const ord = orders.find(o => o.id === btn.dataset.copy);
       if(!ord) return;
-      const text = `Order ${ord.id} for ${ord.customer}\nCourier: ${ord.courier || 'TBC'}\nTracking/AWB: ${ord.tracking || 'TBC'}`;
+      const text = `Order ${ord.id} for ${ord.customer}${ord.po_number ? `\nPO: ${ord.po_number}` : ''}\nCourier: ${ord.courier || 'TBC'}\nTracking/AWB: ${ord.tracking || 'TBC'}`;
       navigator.clipboard.writeText(text).then(() => {
         btn.textContent = 'Copied ✓'; btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy shipment info'; btn.classList.remove('copied'); }, 2000);
@@ -730,15 +801,35 @@ function renderProducts(){
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
       <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">Current Catalog (${products.length})</div>
-      <button class="filter-btn" id="refreshCatalogBtn">↻ Refresh</button>
+      <div style="display:flex;gap:8px;">
+        <button class="filter-btn" id="exportCatalogBtn">⬇ Export Catalog</button>
+        <button class="filter-btn" id="refreshCatalogBtn">↻ Refresh</button>
+      </div>
     </div>
     <input type="text" class="catalog-search" id="catalogSearch" placeholder="Search by SKU or name...">
     <div id="catalogTableWrap"></div>
   `;
   document.getElementById('catalogFile').onchange = handleCatalogFile;
   document.getElementById('refreshCatalogBtn').onclick = async () => { await loadProducts(); renderProducts(); };
+  document.getElementById('exportCatalogBtn').onclick = exportCatalog;
   document.getElementById('catalogSearch').oninput = (e) => renderCatalogTable(e.target.value);
   renderCatalogTable('');
+}
+
+function exportCatalog(){
+  if(products.length === 0){ alert('No products in catalog to export yet.'); return; }
+  const rows = products.map(p => ({
+    'SKU': p.sku,
+    'Name': p.name || '',
+    'Original Price': Number(p.price_original),
+    'Doctor Price': Number(p.price_doctor),
+    'Pharmacist Price': Number(p.price_pharmacist)
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [{wch:16},{wch:34},{wch:14},{wch:14},{wch:16}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'SKU Catalog');
+  XLSX.writeFile(wb, `sku-catalog-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 function renderCatalogTable(filter){
@@ -811,6 +902,34 @@ function mapRowToProduct(row){
   return { sku, name, priceOriginal, priceDoctor, pricePharmacist };
 }
 
+// Scans raw rows (array of arrays) to find which row is actually the
+// header row — the first row containing a cell that looks like "SKU" or
+// similar. This means title rows, instructions, or blank spacer rows
+// above the real headers don't break the import.
+function findHeaderRowIndex(rows2D){
+  const skuKeywords = ['sku', 'productcode', 'itemcode', 'code'];
+  for(let i = 0; i < Math.min(rows2D.length, 15); i++){
+    const row = rows2D[i] || [];
+    const hasSkuHeader = row.some(cell => skuKeywords.includes(normalizeHeader(cell)));
+    if(hasSkuHeader) return i;
+  }
+  return 0; // fallback: assume row 1 if nothing matched
+}
+
+function rows2DToObjects(rows2D){
+  const headerIdx = findHeaderRowIndex(rows2D);
+  const headers = (rows2D[headerIdx] || []).map(h => String(h||'').trim());
+  const objects = [];
+  for(let i = headerIdx + 1; i < rows2D.length; i++){
+    const row = rows2D[i] || [];
+    if(row.every(cell => String(cell||'').trim() === '')) continue; // skip blank rows
+    const obj = {};
+    headers.forEach((h, idx) => { if(h) obj[h] = row[idx]; });
+    objects.push(obj);
+  }
+  return objects;
+}
+
 function handleCatalogFile(e){
   const file = e.target.files[0];
   if(!file) return;
@@ -818,16 +937,21 @@ function handleCatalogFile(e){
 
   if(ext === 'csv'){
     Papa.parse(file, {
-      header: true, skipEmptyLines: true,
-      complete: (results) => { parsedImportRows = results.data.map(mapRowToProduct).filter(p => p.sku); showImportPreview(); }
+      header: false, skipEmptyLines: true,
+      complete: (results) => {
+        const objects = rows2DToObjects(results.data);
+        parsedImportRows = objects.map(mapRowToProduct).filter(p => p.sku);
+        showImportPreview();
+      }
     });
   } else {
     const reader = new FileReader();
     reader.onload = (evt) => {
       const wb = XLSX.read(evt.target.result, { type: 'binary' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      parsedImportRows = rows.map(mapRowToProduct).filter(p => p.sku);
+      const rows2D = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      const objects = rows2DToObjects(rows2D);
+      parsedImportRows = objects.map(mapRowToProduct).filter(p => p.sku);
       showImportPreview();
     };
     reader.readAsBinaryString(file);
