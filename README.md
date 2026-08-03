@@ -84,30 +84,35 @@ password check for a real login lookup.
 | POST   | /api/login      | —           | Exchange role+password for a token |
 | GET    | /api/orders     | any role    | List all orders                   |
 | POST   | /api/orders     | any role    | Submit a new order                |
-| PATCH  | /api/orders/:id | admin only  | Update status/fulfillment/courier/tracking |
+| PATCH  | /api/orders/:id | admin only  | Update status/fulfillment/courier/tracking/PO number/address |
 | PATCH  | /api/orders/:id/followups/:fid | admin only | Mark a scheduled follow-up delivery pending/fulfilled |
 | POST   | /api/orders/:id/po-attachment | admin only | Upload/replace the PO document attached to an order |
 | GET    | /api/orders/:id/po-attachment | any role | Download the attached PO document |
 | DELETE | /api/orders/:id/po-attachment | admin only | Remove the attached PO document |
+| POST   | /api/orders/:id/invoice-attachment | admin only | Upload/replace the invoice attached to an order |
+| GET    | /api/orders/:id/invoice-attachment | any role | Download the attached invoice |
+| DELETE | /api/orders/:id/invoice-attachment | admin only | Remove the attached invoice |
 | POST   | /api/orders/:id/email-tracking | admin only | Email current tracking/shipment info to the salesperson on file |
 | POST   | /api/orders/:id/followups/:fid/email-reminder | admin only | Email a reminder about a scheduled follow-up to the salesperson |
-| GET    | /api/products | any role | List the SKU catalog |
+| GET    | /api/products | any role | List the product catalog |
 | POST   | /api/products/import | admin only | Bulk upload/update products from a parsed CSV or Excel file |
-| DELETE | /api/products/:sku | admin only | Remove a single SKU from the catalog |
+| GET    | /api/products/export.xlsx | admin only | Download the catalog as Excel (server-side; the Products tab also has a client-side export button) |
+| DELETE | /api/products/:name | admin only | Remove a single product from the catalog |
 | GET    | /api/orders/export.csv  | admin only | Download orders as CSV. Optional query params: `status`, `fulfillment`, `from`, `to` |
 | GET    | /api/orders/export.xlsx | admin only | Download orders as a formatted Excel file. Same optional query params |
 
-## SKU catalog & tiered pricing
+## Product catalog & tiered pricing
 
-Admin has a **Products** tab (visible only to Admin) for managing your SKU catalog:
+Admin has a **Products** tab (visible only to Admin) for managing your product catalog. Products are identified by **Name** — there are no separate SKU codes, matching how this business actually names its items.
 
-- **Upload a CSV or Excel file** with columns: `SKU`, `Name`, `Original Price`, `Doctor Price`, `Pharmacist Price` (header names are matched flexibly — e.g. "Doctor's Price" or "DR Price" both work).
-- Uploading is an **upsert**: existing SKUs get updated, new ones get added. Nothing is deleted unless you remove it individually.
+- **Upload a CSV or Excel file** with columns: `Name`, `Original Price`, `Doctor Price`, `Pharmacist Price` (header names are matched flexibly — e.g. "Doctor's Price" or "DR Price" both work, and the app auto-detects which row actually has the headers even if there are title/instruction rows above it).
+- Uploading is an **upsert** keyed by product name: re-uploading a product with the same name updates its prices; a new name adds a new product. Nothing is deleted unless you remove it individually.
 - A preview table shows what will be imported before you confirm.
+- **Export Catalog** downloads the current catalog as an Excel file.
 
-**On the Sales side**, the order form now has:
+**On the Sales side**, the order form has:
 - A **Customer Type** selector (Original / Doctor / Pharmacist) — this determines which price tier is used
-- A **SKU picker** with autocomplete against the catalog — search by SKU or product name, set quantity, click Add
+- A **product picker** with autocomplete against the catalog — search by product name, set quantity, click Add
 - Each added item shows its price for the selected tier automatically; changing Customer Type recalculates all added items
 - The traditional "Items summary" and "Order Amount" fields are auto-filled from what's picked, but remain editable by hand for one-off items not yet in the catalog
 
@@ -185,6 +190,18 @@ For customers who order against a PO:
 - Admin can also add/edit the PO Number later directly on the order card, and it's shown next to the Order ID once set
 - Admin can **attach the actual PO document** (PDF or image, up to 6MB) to any order — click the file picker on the order card. Once attached, the card shows the filename with **Download** and **Remove** buttons instead of the upload field
 - The PO Number and whether a document is attached both appear in the CSV/Excel exports
+
+## Delivery address
+
+Sales enters the **delivery address** when submitting an order. Admin can edit it later directly on the order card. It shows on the Sales "Track Orders" view too.
+
+## Invoice attachment
+
+Similar to the PO attachment, but the other direction: **Admin** uploads/replaces the invoice document for an order (PDF or image, up to 6MB). **Sales can download it** from the "Track Orders" view (read-only — only Admin can upload, replace, or remove it).
+
+## Tracking as a real link
+
+The "Tracking" field is a **link** (e.g. a courier's real-time tracking URL) rather than a plain AWB number. Once set, it renders as a clickable **"Track Shipment"** link on the order card, in the shipment-info copy text, and in tracking emails — so whoever receives it can click straight through to live tracking instead of manually pasting a number into a courier's site.
 
 ## Report exports
 

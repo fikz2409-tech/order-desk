@@ -83,7 +83,7 @@
   .fulfill-row input{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;flex:1;min-width:120px;}
 
   .po-attach-row{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;}
-  .po-file-input{font-family:'IBM Plex Mono',monospace;font-size:11px;max-width:200px;}
+  .po-file-input, .invoice-file-input{font-family:'IBM Plex Mono',monospace;font-size:11px;max-width:200px;}
   .po-download-btn, .po-remove-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer;background:#fff;}
   .po-download-btn{border:1px solid var(--processing);color:var(--processing);}
   .po-remove-btn{border:1px solid var(--pending);color:var(--pending);}
@@ -289,6 +289,7 @@ function renderSales(){
         <div class="field"><label>Customer</label><input type="text" id="f_customer" placeholder="Customer / company name"></div>
         <div class="field"><label>PO Number (if applicable)</label><input type="text" id="f_po_number" placeholder="e.g. PO-2026-0456"></div>
       </div>
+      <div class="field"><label>Delivery Address</label><textarea id="f_address" style="min-height:44px;font-family:'Inter',sans-serif;" placeholder="Full delivery address"></textarea></div>
       <div class="row2">
         <div class="field">
           <label>Customer Type (pricing tier)</label>
@@ -303,7 +304,7 @@ function renderSales(){
       <div class="field">
         <label>Add Items from Catalog</label>
         <div class="item-row">
-          <input type="text" id="f_sku_input" list="skuDatalist" placeholder="Search SKU or product name...">
+          <input type="text" id="f_sku_input" list="skuDatalist" placeholder="Search product name...">
           <datalist id="skuDatalist"></datalist>
           <input type="number" id="f_qty_input" min="1" value="1" placeholder="Qty">
           <button type="button" class="add-item-btn" id="addLineBtn">+ Add</button>
@@ -365,26 +366,26 @@ function addFollowupRow(defaultDesc){
 function populateSkuDatalist(){
   const list = document.getElementById('skuDatalist');
   if(!list) return;
-  list.innerHTML = products.map(p => `<option value="${escapeHtml(p.sku)}">${escapeHtml(p.sku)} — ${escapeHtml(p.name||'')}</option>`).join('');
+  list.innerHTML = products.map(p => `<option value="${escapeHtml(p.name)}"></option>`).join('');
 }
 
 function addLineItem(){
-  const skuInput = document.getElementById('f_sku_input');
+  const nameInput = document.getElementById('f_sku_input');
   const qtyInput = document.getElementById('f_qty_input');
-  const skuVal = skuInput.value.trim();
+  const nameVal = nameInput.value.trim();
   const qty = parseInt(qtyInput.value) || 1;
-  if(!skuVal){ return; }
+  if(!nameVal){ return; }
 
-  const product = findProduct(skuVal);
+  const product = findProduct(nameVal);
   const tier = document.getElementById('f_customer_type').value;
 
   if(!product){
     // Not in catalog — still allow adding as a free-text line so sales isn't blocked.
-    lineItems.push({ sku: skuVal, name: '', qty, unitPrice: 0, inCatalog: false });
+    lineItems.push({ name: nameVal, qty, unitPrice: 0, inCatalog: false });
   } else {
-    lineItems.push({ sku: product.sku, name: product.name, qty, unitPrice: priceForTier(product, tier), inCatalog: true });
+    lineItems.push({ name: product.name, qty, unitPrice: priceForTier(product, tier), inCatalog: true });
   }
-  skuInput.value = '';
+  nameInput.value = '';
   qtyInput.value = '1';
   renderLineItems();
 }
@@ -393,7 +394,7 @@ function recalcLineItemPrices(){
   const tier = document.getElementById('f_customer_type').value;
   lineItems.forEach(li => {
     if(li.inCatalog){
-      const product = findProduct(li.sku);
+      const product = findProduct(li.name);
       if(product) li.unitPrice = priceForTier(product, tier);
     }
   });
@@ -415,11 +416,10 @@ function renderLineItems(){
   const total = lineItems.reduce((sum, li) => sum + (li.unitPrice * li.qty), 0);
   wrap.innerHTML = `
     <table class="line-items-table">
-      <tr><th>SKU</th><th>Name</th><th>Qty</th><th>Unit Price</th><th>Line Total</th><th></th></tr>
+      <tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Line Total</th><th></th></tr>
       ${lineItems.map((li, idx) => `
         <tr>
-          <td>${escapeHtml(li.sku)}${li.inCatalog ? '' : ' <span class="ts" style="color:var(--pending);">(not in catalog)</span>'}</td>
-          <td style="font-family:'Inter',sans-serif;">${escapeHtml(li.name)}</td>
+          <td style="font-family:'Inter',sans-serif;">${escapeHtml(li.name)}${li.inCatalog ? '' : ' <span class="ts" style="color:var(--pending);">(not in catalog)</span>'}</td>
           <td>${li.qty}</td>
           <td>RM ${li.unitPrice.toFixed(2)}</td>
           <td>RM ${(li.unitPrice * li.qty).toFixed(2)}</td>
@@ -436,7 +436,7 @@ function renderLineItems(){
 }
 
 function syncItemsAndAmount(){
-  const itemsText = lineItems.map(li => `${li.sku} x ${li.qty} (RM ${li.unitPrice.toFixed(2)} each)`).join('\n');
+  const itemsText = lineItems.map(li => `${li.name} x ${li.qty} (RM ${li.unitPrice.toFixed(2)} each)`).join('\n');
   const total = lineItems.reduce((sum, li) => sum + (li.unitPrice * li.qty), 0);
   const itemsField = document.getElementById('f_items');
   const amountField = document.getElementById('f_amount');
@@ -448,6 +448,7 @@ async function submitOrder(){
   const sales = document.getElementById('f_sales').value.trim();
   const salesEmail = document.getElementById('f_sales_email').value.trim();
   const customer = document.getElementById('f_customer').value.trim();
+  const address = document.getElementById('f_address').value.trim();
   const amount = document.getElementById('f_amount').value.trim();
   const items = document.getElementById('f_items').value.trim();
   const notes = document.getElementById('f_notes').value.trim();
@@ -466,12 +467,13 @@ async function submitOrder(){
   btn.disabled = true; btn.textContent = 'Submitting...';
 
   try{
-    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, amount, items, notes, followUps, poNumber }) });
+    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, address, amount, items, notes, followUps, poNumber }) });
     btn.disabled = false; btn.textContent = 'Submit Order to Admin';
     const confirm = document.getElementById('confirmMsg');
     confirm.style.display = 'block';
     confirm.textContent = `✓ Submitted — Order ID ${order.id}`;
     document.getElementById('f_customer').value='';
+    document.getElementById('f_address').value='';
     document.getElementById('f_amount').value='';
     document.getElementById('f_items').value='';
     document.getElementById('f_notes').value='';
@@ -545,13 +547,15 @@ async function renderTrackOrders(){
       <div class="order-main">
         <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}</div>
         <div class="order-customer">${escapeHtml(o.customer)}</div>
+        ${o.address ? `<div class="order-meta">📍 ${escapeHtml(o.address)}</div>` : ''}
         <div class="order-items">${escapeHtml(o.items)}</div>
         <div class="order-meta">
           <span>Sales: ${escapeHtml(o.salesperson)}</span>
           ${o.amount ? `<span>RM ${escapeHtml(o.amount)}</span>` : ''}
           <span>${new Date(o.created_at).toLocaleString()}</span>
         </div>
-        ${(o.courier || o.tracking) ? `<div class="order-meta">📦 ${escapeHtml(o.courier||'Courier TBC')} — AWB ${escapeHtml(o.tracking||'TBC')}</div>` : ''}
+        ${(o.courier || o.tracking) ? `<div class="order-meta">📦 ${escapeHtml(o.courier||'Courier TBC')}${o.tracking ? ` — <a href="${escapeHtml(o.tracking)}" target="_blank" rel="noopener" style="color:var(--processing);">Track Shipment</a>` : ' — Tracking TBC'}</div>` : ''}
+        ${o.has_invoice_attachment ? `<div class="order-meta">🧾 <button type="button" class="po-download-btn" data-invoicedownload-track="${o.id}" style="font-size:11px;">Download Invoice</button></div>` : ''}
         ${(o.follow_ups && o.follow_ups.length) ? `
           <div class="followup-block">
             <div class="ts" style="color:var(--ink-soft);margin-bottom:4px;">Scheduled deliveries</div>
@@ -566,6 +570,10 @@ async function renderTrackOrders(){
       </div>
     </div>
   `).join('');
+
+  wrap.querySelectorAll('[data-invoicedownload-track]').forEach(btn => {
+    btn.onclick = () => downloadOrderFile(btn.dataset.invoicedownloadTrack, 'invoice-attachment');
+  });
 }
 
 async function renderAdmin(){
@@ -663,11 +671,22 @@ async function renderAdmin(){
                  <span class="ts" style="color:var(--ink-soft);">Attach PO document (PDF/image, max 6MB)</span>`}
           </div>
           <div class="fulfill-row">
+            <textarea class="address-input" data-id="${o.id}" placeholder="Delivery address" style="flex:1;min-width:120px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;min-height:38px;">${escapeHtml(o.address||'')}</textarea>
+          </div>
+          <div class="po-attach-row">
+            ${o.has_invoice_attachment
+              ? `<span class="ts" style="color:var(--paid);">🧾 ${escapeHtml(o.invoice_file_name||'Invoice')}</span>
+                 <button type="button" class="po-download-btn" data-invoicedownload="${o.id}">Download</button>
+                 <button type="button" class="po-remove-btn" data-invoiceremove="${o.id}">Remove</button>`
+              : `<input type="file" class="invoice-file-input" data-invoiceupload="${o.id}" accept=".pdf,.jpg,.jpeg,.png">
+                 <span class="ts" style="color:var(--ink-soft);">Attach invoice (PDF/image, max 6MB)</span>`}
+          </div>
+          <div class="fulfill-row">
             <input type="text" class="courier-input" data-id="${o.id}" placeholder="Courier (e.g. J&T)" value="${escapeHtml(o.courier||'')}">
-            <input type="text" class="tracking-input" data-id="${o.id}" placeholder="Tracking / AWB number" value="${escapeHtml(o.tracking||'')}">
+            <input type="text" class="tracking-input" data-id="${o.id}" placeholder="Tracking Link (e.g. https://...)" value="${escapeHtml(o.tracking||'')}">
           </div>
           <div class="share-block ${o.fulfillment==='shipped' && (o.courier||o.tracking) ? 'show':''}" data-share="${o.id}">
-            <div class="ship-line">📦 ${escapeHtml(o.courier||'Courier TBC')} — AWB ${escapeHtml(o.tracking||'TBC')}</div>
+            <div class="ship-line">📦 ${escapeHtml(o.courier||'Courier TBC')} — ${o.tracking ? `<a href="${escapeHtml(o.tracking)}" target="_blank" rel="noopener" style="color:var(--paid);text-decoration:underline;">Track Shipment</a>` : 'Tracking TBC'}</div>
             <button class="copy-btn" data-copy="${o.id}">Copy shipment info</button>
             ${o.salesperson_email
               ? (o.tracking_emailed
@@ -724,12 +743,13 @@ async function renderAdmin(){
     };
   });
 
-  list.querySelectorAll('.courier-input, .tracking-input, .po-input').forEach(inp => {
+  list.querySelectorAll('.courier-input, .tracking-input, .po-input, .address-input').forEach(inp => {
     inp.onchange = async (e) => {
       const id = e.target.dataset.id;
       let field = 'tracking';
       if(e.target.classList.contains('courier-input')) field = 'courier';
       else if(e.target.classList.contains('po-input')) field = 'poNumber';
+      else if(e.target.classList.contains('address-input')) field = 'address';
       try{ await apiFetch(`/orders/${id}`, { method:'PATCH', body: JSON.stringify({ [field]: e.target.value }) }); renderAdmin(); }catch(e){}
     };
   });
@@ -755,23 +775,33 @@ async function renderAdmin(){
     };
   });
 
-  list.querySelectorAll('[data-podownload]').forEach(btn => {
-    btn.onclick = async () => {
-      const id = btn.dataset.podownload;
-      try{
-        const res = await fetch(`${API}/orders/${id}/po-attachment`, { headers: { 'Authorization': 'Bearer ' + authToken } });
-        if(!res.ok) throw new Error('Download failed');
-        const blob = await res.blob();
-        const disposition = res.headers.get('Content-Disposition') || '';
-        const match = disposition.match(/filename="(.+)"/);
-        const filename = match ? match[1] : 'PO-document';
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove();
-        window.URL.revokeObjectURL(url);
-      }catch(err){ alert('Could not download PO document.'); }
+  list.querySelectorAll('.invoice-file-input').forEach(inp => {
+    inp.onchange = async (e) => {
+      const id = e.target.dataset.invoiceupload;
+      const file = e.target.files[0];
+      if(!file) return;
+      if(file.size > 6 * 1024 * 1024){ alert('File too large — please keep invoice attachments under 6MB.'); e.target.value = ''; return; }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1];
+        try{
+          await apiFetch(`/orders/${id}/invoice-attachment`, {
+            method:'POST',
+            body: JSON.stringify({ fileName: file.name, fileType: file.type, dataBase64: base64 })
+          });
+          renderAdmin();
+        }catch(err){ alert(err.message || 'Upload failed'); }
+      };
+      reader.readAsDataURL(file);
     };
+  });
+
+  list.querySelectorAll('[data-podownload]').forEach(btn => {
+    btn.onclick = () => downloadOrderFile(btn.dataset.podownload, 'po-attachment');
+  });
+
+  list.querySelectorAll('[data-invoicedownload]').forEach(btn => {
+    btn.onclick = () => downloadOrderFile(btn.dataset.invoicedownload, 'invoice-attachment');
   });
 
   list.querySelectorAll('[data-poremove]').forEach(btn => {
@@ -780,6 +810,14 @@ async function renderAdmin(){
       try{ await apiFetch(`/orders/${btn.dataset.poremove}/po-attachment`, { method:'DELETE' }); renderAdmin(); }catch(err){ alert(err.message); }
     };
   });
+
+  list.querySelectorAll('[data-invoiceremove]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('Remove the attached invoice from this order?')) return;
+      try{ await apiFetch(`/orders/${btn.dataset.invoiceremove}/invoice-attachment`, { method:'DELETE' }); renderAdmin(); }catch(err){ alert(err.message); }
+    };
+  });
+
 
   list.querySelectorAll('.history-toggle').forEach(btn => {
     btn.onclick = () => document.getElementById('hist-' + btn.dataset.hist).classList.toggle('open');
@@ -831,7 +869,7 @@ async function renderAdmin(){
     btn.onclick = () => {
       const ord = orders.find(o => o.id === btn.dataset.copy);
       if(!ord) return;
-      const text = `Order ${ord.id} for ${ord.customer}${ord.po_number ? `\nPO: ${ord.po_number}` : ''}\nCourier: ${ord.courier || 'TBC'}\nTracking/AWB: ${ord.tracking || 'TBC'}`;
+      const text = `Order ${ord.id} for ${ord.customer}${ord.po_number ? `\nPO: ${ord.po_number}` : ''}\nCourier: ${ord.courier || 'TBC'}\nTracking Link: ${ord.tracking || 'TBC'}`;
       navigator.clipboard.writeText(text).then(() => {
         btn.textContent = 'Copied ✓'; btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy shipment info'; btn.classList.remove('copied'); }, 2000);
@@ -842,13 +880,31 @@ async function renderAdmin(){
 
 function escapeHtml(str){ const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
 
+async function downloadOrderFile(orderId, kind){
+  try{
+    const res = await fetch(`${API}/orders/${orderId}/${kind}`, { headers: { 'Authorization': 'Bearer ' + authToken } });
+    if(!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="(.+)"/);
+    const filename = match ? match[1] : (kind === 'invoice-attachment' ? 'invoice' : 'PO-document');
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    window.URL.revokeObjectURL(url);
+  }catch(err){
+    alert(`Could not download ${kind === 'invoice-attachment' ? 'invoice' : 'PO document'}.`);
+  }
+}
+
 // ---------- PRODUCTS ----------
 async function loadProducts(){
   try{ products = await apiFetch('/products'); }catch(e){ products = []; }
 }
 
-function findProduct(sku){
-  return products.find(p => p.sku.toLowerCase() === String(sku||'').trim().toLowerCase());
+function findProduct(name){
+  return products.find(p => p.name.toLowerCase() === String(name||'').trim().toLowerCase());
 }
 
 function priceForTier(product, tier){
@@ -864,8 +920,8 @@ function renderProducts(){
   const el = document.getElementById('productsView');
   el.innerHTML = `
     <div class="upload-box">
-      <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">Upload SKU Catalog</div>
-      <div class="upload-hint">CSV or Excel (.xlsx). Columns: SKU, Name, Original Price, Doctor Price, Pharmacist Price</div>
+      <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;">Upload Product Catalog</div>
+      <div class="upload-hint">CSV or Excel (.xlsx). Columns: Name, Original Price, Doctor Price, Pharmacist Price</div>
       <input type="file" id="catalogFile" accept=".csv,.xlsx,.xls">
       <div id="importPreviewWrap"></div>
     </div>
@@ -876,7 +932,7 @@ function renderProducts(){
         <button class="filter-btn" id="refreshCatalogBtn">↻ Refresh</button>
       </div>
     </div>
-    <input type="text" class="catalog-search" id="catalogSearch" placeholder="Search by SKU or name...">
+    <input type="text" class="catalog-search" id="catalogSearch" placeholder="Search by product name...">
     <div id="catalogTableWrap"></div>
   `;
   document.getElementById('catalogFile').onchange = handleCatalogFile;
@@ -889,43 +945,41 @@ function renderProducts(){
 function exportCatalog(){
   if(products.length === 0){ alert('No products in catalog to export yet.'); return; }
   const rows = products.map(p => ({
-    'SKU': p.sku,
     'Name': p.name || '',
     'Original Price': Number(p.price_original),
     'Doctor Price': Number(p.price_doctor),
     'Pharmacist Price': Number(p.price_pharmacist)
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [{wch:16},{wch:34},{wch:14},{wch:14},{wch:16}];
+  ws['!cols'] = [{wch:34},{wch:14},{wch:14},{wch:16}];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'SKU Catalog');
-  XLSX.writeFile(wb, `sku-catalog-${new Date().toISOString().slice(0,10)}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, 'Product Catalog');
+  XLSX.writeFile(wb, `product-catalog-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 function renderCatalogTable(filter){
   const wrap = document.getElementById('catalogTableWrap');
   const f = (filter||'').toLowerCase();
-  const rows = products.filter(p => !f || p.sku.toLowerCase().includes(f) || (p.name||'').toLowerCase().includes(f));
+  const rows = products.filter(p => !f || (p.name||'').toLowerCase().includes(f));
   if(rows.length === 0){ wrap.innerHTML = '<div class="empty">No products yet — upload a CSV or Excel file above.</div>'; return; }
   wrap.innerHTML = `
     <table class="catalog-table">
-      <tr><th>SKU</th><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th><th></th></tr>
+      <tr><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th><th></th></tr>
       ${rows.map(p => `
         <tr>
-          <td>${escapeHtml(p.sku)}</td>
           <td style="font-family:'Inter',sans-serif;">${escapeHtml(p.name||'')}</td>
           <td>RM ${Number(p.price_original).toFixed(2)}</td>
           <td>RM ${Number(p.price_doctor).toFixed(2)}</td>
           <td>RM ${Number(p.price_pharmacist).toFixed(2)}</td>
-          <td><button class="del-sku-btn" data-delsku="${escapeHtml(p.sku)}">Remove</button></td>
+          <td><button class="del-sku-btn" data-delname="${escapeHtml(p.name)}">Remove</button></td>
         </tr>
       `).join('')}
     </table>
   `;
-  wrap.querySelectorAll('[data-delsku]').forEach(btn => {
+  wrap.querySelectorAll('[data-delname]').forEach(btn => {
     btn.onclick = async () => {
-      if(!confirm(`Remove SKU "${btn.dataset.delsku}" from the catalog?`)) return;
-      try{ await apiFetch(`/products/${encodeURIComponent(btn.dataset.delsku)}`, { method:'DELETE' }); await loadProducts(); renderProducts(); }catch(e){ alert(e.message); }
+      if(!confirm(`Remove "${btn.dataset.delname}" from the catalog?`)) return;
+      try{ await apiFetch(`/products/${encodeURIComponent(btn.dataset.delname)}`, { method:'DELETE' }); await loadProducts(); renderProducts(); }catch(e){ alert(e.message); }
     };
   });
 }
@@ -957,7 +1011,6 @@ function mapRowToProduct(row){
     return '';
   }
 
-  const sku = String(find(['sku'], ['productcode'], ['itemcode'], ['code'])).trim();
   const name = String(find(['name'], ['productname'], ['itemname'], ['description'])).trim();
   const priceOriginal = cleanNumber(find(
     ['original','price'], ['retail','price'], ['normal','price'], ['original'], ['price']
@@ -969,19 +1022,19 @@ function mapRowToProduct(row){
     ['pharmacist','price'], ['pharmacy','price'], ['pharmacist']
   ));
 
-  return { sku, name, priceOriginal, priceDoctor, pricePharmacist };
+  return { name, priceOriginal, priceDoctor, pricePharmacist };
 }
 
 // Scans raw rows (array of arrays) to find which row is actually the
-// header row — the first row containing a cell that looks like "SKU" or
+// header row — the first row containing a cell that looks like "Name" or
 // similar. This means title rows, instructions, or blank spacer rows
 // above the real headers don't break the import.
 function findHeaderRowIndex(rows2D){
-  const skuKeywords = ['sku', 'productcode', 'itemcode', 'code'];
+  const nameKeywords = ['name', 'productname', 'itemname'];
   for(let i = 0; i < Math.min(rows2D.length, 15); i++){
     const row = rows2D[i] || [];
-    const hasSkuHeader = row.some(cell => skuKeywords.includes(normalizeHeader(cell)));
-    if(hasSkuHeader) return i;
+    const hasNameHeader = row.some(cell => nameKeywords.includes(normalizeHeader(cell)));
+    if(hasNameHeader) return i;
   }
   return 0; // fallback: assume row 1 if nothing matched
 }
@@ -1010,7 +1063,7 @@ function handleCatalogFile(e){
       header: false, skipEmptyLines: true,
       complete: (results) => {
         const objects = rows2DToObjects(results.data);
-        parsedImportRows = objects.map(mapRowToProduct).filter(p => p.sku);
+        parsedImportRows = objects.map(mapRowToProduct).filter(p => p.name);
         showImportPreview();
       }
     });
@@ -1021,7 +1074,7 @@ function handleCatalogFile(e){
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows2D = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
       const objects = rows2DToObjects(rows2D);
-      parsedImportRows = objects.map(mapRowToProduct).filter(p => p.sku);
+      parsedImportRows = objects.map(mapRowToProduct).filter(p => p.name);
       showImportPreview();
     };
     reader.readAsBinaryString(file);
@@ -1031,7 +1084,7 @@ function handleCatalogFile(e){
 function showImportPreview(){
   const wrap = document.getElementById('importPreviewWrap');
   if(parsedImportRows.length === 0){
-    wrap.innerHTML = '<div class="ts" style="color:var(--pending);margin-top:12px;">No valid rows found. Check that your file has a SKU column.</div>';
+    wrap.innerHTML = '<div class="ts" style="color:var(--pending);margin-top:12px;">No valid rows found. Check that your file has a Name column.</div>';
     return;
   }
   const preview = parsedImportRows.slice(0, 8);
@@ -1039,8 +1092,8 @@ function showImportPreview(){
     <div style="text-align:left;margin-top:16px;">
       <div class="ts" style="margin-bottom:8px;">Preview (${parsedImportRows.length} rows found, showing first ${preview.length}):</div>
       <table class="preview-table">
-        <tr><th>SKU</th><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th></tr>
-        ${preview.map(p => `<tr><td>${escapeHtml(p.sku)}</td><td style="font-family:'Inter',sans-serif;">${escapeHtml(p.name)}</td><td>RM ${p.priceOriginal.toFixed(2)}</td><td>RM ${p.priceDoctor.toFixed(2)}</td><td>RM ${p.pricePharmacist.toFixed(2)}</td></tr>`).join('')}
+        <tr><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th></tr>
+        ${preview.map(p => `<tr><td style="font-family:'Inter',sans-serif;">${escapeHtml(p.name)}</td><td>RM ${p.priceOriginal.toFixed(2)}</td><td>RM ${p.priceDoctor.toFixed(2)}</td><td>RM ${p.pricePharmacist.toFixed(2)}</td></tr>`).join('')}
       </table>
       <button class="confirm-upload-btn" id="confirmImportBtn">Upload ${parsedImportRows.length} products</button>
     </div>

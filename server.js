@@ -91,14 +91,15 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/orders', checkAuth, async (req, res) => {
-  // Excludes po_file_data (base64 file content) from the list to keep this
-  // fast — the full attachment is only fetched on demand via the download
-  // endpoint, not loaded into memory every time the order list refreshes.
+  // Excludes po_file_data/invoice_file_data (base64 file content) from the
+  // list to keep this fast — full attachments are only fetched on demand.
   const result = await pool.query(`
-    SELECT id, salesperson, salesperson_email, customer, amount, items, notes,
+    SELECT id, salesperson, salesperson_email, customer, address, amount, items, notes,
            status, fulfillment, courier, tracking, history, follow_ups,
            tracking_emailed, po_number, po_file_name, po_file_type, created_at,
-           (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment
+           invoice_file_name, invoice_file_type,
+           (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment,
+           (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment
     FROM orders ORDER BY created_at DESC
   `);
   res.json(result.rows);
@@ -114,9 +115,11 @@ function buildFilterQuery(query) {
   if (from) { params.push(from); clauses.push(`created_at >= $${params.length}`); }
   if (to) { params.push(to); clauses.push(`created_at <= $${params.length}`); }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const cols = `id, salesperson, salesperson_email, customer, amount, items, notes,
+  const cols = `id, salesperson, salesperson_email, customer, address, amount, items, notes,
     status, fulfillment, courier, tracking, history, follow_ups, po_number,
-    po_file_name, (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment, created_at`;
+    po_file_name, (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment,
+    invoice_file_name, (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment,
+    created_at`;
   return { text: `SELECT ${cols} FROM orders ${where} ORDER BY created_at DESC`, params };
 }
 
@@ -124,14 +127,16 @@ const EXPORT_COLUMNS = [
   { header: 'Order ID', key: 'id', width: 16 },
   { header: 'PO Number', key: 'po_number', width: 16 },
   { header: 'PO Attached', key: 'poAttachedLabel', width: 12 },
+  { header: 'Invoice Attached', key: 'invoiceAttachedLabel', width: 14 },
   { header: 'Customer', key: 'customer', width: 24 },
+  { header: 'Address', key: 'address', width: 30 },
   { header: 'Salesperson', key: 'salesperson', width: 18 },
   { header: 'Items', key: 'items', width: 34 },
   { header: 'Amount (RM)', key: 'amount', width: 14 },
   { header: 'Payment Status', key: 'status', width: 16 },
   { header: 'Fulfillment', key: 'fulfillment', width: 14 },
   { header: 'Courier', key: 'courier', width: 16 },
-  { header: 'Tracking / AWB', key: 'tracking', width: 20 },
+  { header: 'Tracking Link', key: 'tracking', width: 30 },
   { header: 'Pending Follow-ups', key: 'followUpsSummary', width: 32 },
   { header: 'Notes', key: 'notes', width: 26 },
   { header: 'Created At', key: 'created_at', width: 20 }
@@ -156,7 +161,7 @@ app.get('/api/orders/export.csv', checkAuth, requireAdmin, async (req, res) => {
   const result = await pool.query(text, params);
   const headerRow = EXPORT_COLUMNS.map(c => csvEscape(c.header)).join(',');
   const rows = result.rows.map(o => {
-    const rowData = { ...o, followUpsSummary: summarizeFollowUps(o.follow_ups), poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No' };
+    const rowData = { ...o, followUpsSummary: summarizeFollowUps(o.follow_ups), poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No', invoiceAttachedLabel: o.has_invoice_attachment ? 'Yes' : 'No' };
     return EXPORT_COLUMNS.map(c => csvEscape(c.key === 'created_at' ? new Date(rowData[c.key]).toLocaleString() : rowData[c.key])).join(',');
   });
   const csv = [headerRow, ...rows].join('\r\n');
@@ -180,7 +185,9 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
       id: o.id,
       po_number: o.po_number,
       poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No',
+      invoiceAttachedLabel: o.has_invoice_attachment ? 'Yes' : 'No',
       customer: o.customer,
+      address: o.address,
       salesperson: o.salesperson,
       items: o.items,
       amount: o.amount,
@@ -202,7 +209,7 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
 });
 
 app.post('/api/orders', checkAuth, async (req, res) => {
-  const { salesperson, salespersonEmail, customer, amount, items, notes, followUps, poNumber } = req.body || {};
+  const { salesperson, salespersonEmail, customer, address, amount, items, notes, followUps, poNumber } = req.body || {};
   if (!salesperson || !customer || !items) {
     return res.status(400).json({ error: 'salesperson, customer, and items are required' });
   }
@@ -225,9 +232,9 @@ app.post('/api/orders', checkAuth, async (req, res) => {
   }
 
   await pool.query(
-    `INSERT INTO orders (id, salesperson, salesperson_email, customer, amount, items, notes, history, follow_ups, po_number)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [id, salesperson, salespersonEmail || '', customer, amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim()]
+    `INSERT INTO orders (id, salesperson, salesperson_email, customer, address, amount, items, notes, history, follow_ups, po_number)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [id, salesperson, salespersonEmail || '', customer, address || '', amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim()]
   );
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.status(201).json(result.rows[0]);
@@ -236,7 +243,7 @@ app.post('/api/orders', checkAuth, async (req, res) => {
 // Only admin can update order status/fulfillment/courier/tracking.
 app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { status, fulfillment, courier, tracking, poNumber } = req.body || {};
+  const { status, fulfillment, courier, tracking, poNumber, address } = req.body || {};
 
   const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
@@ -253,10 +260,13 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
     history.push({ ts: new Date().toISOString(), text: `Courier set to "${courier}"` });
   }
   if (tracking !== undefined && tracking !== order.tracking) {
-    history.push({ ts: new Date().toISOString(), text: `Tracking number set to "${tracking}"` });
+    history.push({ ts: new Date().toISOString(), text: `Tracking link set to "${tracking}"` });
   }
   if (poNumber !== undefined && poNumber !== order.po_number) {
     history.push({ ts: new Date().toISOString(), text: `PO number set to "${poNumber}"` });
+  }
+  if (address !== undefined && address !== order.address) {
+    history.push({ ts: new Date().toISOString(), text: `Delivery address updated` });
   }
 
   await pool.query(
@@ -266,9 +276,10 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
          courier = COALESCE($3, courier),
          tracking = COALESCE($4, tracking),
          po_number = COALESCE($5, po_number),
-         history = $6
-     WHERE id = $7`,
-    [status, fulfillment, courier, tracking, poNumber, JSON.stringify(history), id]
+         address = COALESCE($6, address),
+         history = $7
+     WHERE id = $8`,
+    [status, fulfillment, courier, tracking, poNumber, address, JSON.stringify(history), id]
   );
 
   // Auto-send: once an order is Shipped with courier + tracking present,
@@ -288,7 +299,7 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
       `Payment status: ${refreshed.status}`,
       `Fulfillment: ${refreshed.fulfillment}`,
       `Courier: ${refreshed.courier || 'TBC'}`,
-      `Tracking / AWB: ${refreshed.tracking || 'TBC'}`
+      `Tracking Link: ${refreshed.tracking || 'TBC'}`
     ].filter(Boolean).join('\n');
     try {
       await sendMail({ to: refreshed.salesperson_email, subject: `Order ${refreshed.id} — shipped`, text });
@@ -361,6 +372,57 @@ app.delete('/api/orders/:id/po-attachment', checkAuth, requireAdmin, async (req,
   res.json({ ok: true });
 });
 
+// Admin uploads/replaces the invoice attached to an order (visible to Sales
+// as a download, but only Admin can upload/change/remove it).
+app.post('/api/orders/:id/invoice-attachment', checkAuth, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { fileName, fileType, dataBase64 } = req.body || {};
+  if (!fileName || !dataBase64) return res.status(400).json({ error: 'No file provided' });
+
+  const approxBytes = Math.ceil((dataBase64.length * 3) / 4);
+  if (approxBytes > MAX_ATTACHMENT_BYTES) {
+    return res.status(400).json({ error: 'File too large — please keep invoice attachments under 6MB' });
+  }
+
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const order = existing.rows[0];
+  const history = order.history || [];
+  history.push({ ts: new Date().toISOString(), text: `Invoice attached: ${fileName}` });
+
+  await pool.query(
+    'UPDATE orders SET invoice_file_name=$1, invoice_file_type=$2, invoice_file_data=$3, history=$4 WHERE id=$5',
+    [fileName, fileType || 'application/octet-stream', dataBase64, JSON.stringify(history), id]
+  );
+  res.json({ ok: true });
+});
+
+// Any signed-in role (Sales included) can download the invoice.
+app.get('/api/orders/:id/invoice-attachment', checkAuth, async (req, res) => {
+  const result = await pool.query('SELECT invoice_file_name, invoice_file_type, invoice_file_data FROM orders WHERE id=$1', [req.params.id]);
+  if (result.rows.length === 0 || !result.rows[0].invoice_file_data) {
+    return res.status(404).json({ error: 'No invoice attached to this order' });
+  }
+  const { invoice_file_name, invoice_file_type, invoice_file_data } = result.rows[0];
+  const buffer = Buffer.from(invoice_file_data, 'base64');
+  res.setHeader('Content-Type', invoice_file_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${invoice_file_name}"`);
+  res.send(buffer);
+});
+
+app.delete('/api/orders/:id/invoice-attachment', checkAuth, requireAdmin, async (req, res) => {
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [req.params.id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const order = existing.rows[0];
+  const history = order.history || [];
+  history.push({ ts: new Date().toISOString(), text: `Invoice removed: ${order.invoice_file_name}` });
+  await pool.query(
+    `UPDATE orders SET invoice_file_name='', invoice_file_type='', invoice_file_data='', history=$1 WHERE id=$2`,
+    [JSON.stringify(history), req.params.id]
+  );
+  res.json({ ok: true });
+});
+
 app.patch('/api/orders/:id/followups/:fid', checkAuth, requireAdmin, async (req, res) => {
   const { id, fid } = req.params;
   const { status } = req.body || {};
@@ -398,7 +460,7 @@ app.post('/api/orders/:id/email-tracking', checkAuth, requireAdmin, async (req, 
     `Payment status: ${o.status}`,
     `Fulfillment: ${o.fulfillment}`,
     `Courier: ${o.courier || 'TBC'}`,
-    `Tracking / AWB: ${o.tracking || 'TBC'}`,
+    `Tracking Link: ${o.tracking || 'TBC'}`,
     o.notes ? `Notes: ${o.notes}` : null
   ].filter(Boolean).join('\n');
 
@@ -444,12 +506,13 @@ app.post('/api/orders/:id/followups/:fid/email-reminder', checkAuth, requireAdmi
 
 // Any signed-in role can read the catalog (sales needs it to build orders).
 app.get('/api/products', checkAuth, async (req, res) => {
-  const result = await pool.query('SELECT * FROM products ORDER BY sku ASC');
+  const result = await pool.query('SELECT * FROM products ORDER BY name ASC');
   res.json(result.rows);
 });
 
-// Admin bulk-imports/upserts the SKU catalog from a parsed CSV/Excel file.
-// Body: { products: [{ sku, name, priceOriginal, priceDoctor, pricePharmacist }] }
+// Admin bulk-imports/upserts the product catalog from a parsed CSV/Excel file.
+// Body: { products: [{ name, priceOriginal, priceDoctor, pricePharmacist }] }
+// Products are identified by Name (no SKU codes in this business).
 app.post('/api/products/import', checkAuth, requireAdmin, async (req, res) => {
   const { products } = req.body || {};
   if (!Array.isArray(products) || products.length === 0) {
@@ -458,30 +521,28 @@ app.post('/api/products/import', checkAuth, requireAdmin, async (req, res) => {
 
   const clean = products
     .map(p => ({
-      sku: String(p.sku || '').trim(),
       name: String(p.name || '').trim(),
       priceOriginal: Number(p.priceOriginal) || 0,
       priceDoctor: Number(p.priceDoctor) || 0,
       pricePharmacist: Number(p.pricePharmacist) || 0
     }))
-    .filter(p => p.sku);
+    .filter(p => p.name);
 
   if (clean.length === 0) {
-    return res.status(400).json({ error: 'No valid rows found — check that each row has a SKU' });
+    return res.status(400).json({ error: 'No valid rows found — check that each row has a product Name' });
   }
 
   let upserted = 0;
   for (const p of clean) {
     await pool.query(
-      `INSERT INTO products (sku, name, price_original, price_doctor, price_pharmacist, updated_at)
-       VALUES ($1,$2,$3,$4,$5, now())
-       ON CONFLICT (sku) DO UPDATE SET
-         name = EXCLUDED.name,
+      `INSERT INTO products (name, price_original, price_doctor, price_pharmacist, updated_at)
+       VALUES ($1,$2,$3,$4, now())
+       ON CONFLICT (name) DO UPDATE SET
          price_original = EXCLUDED.price_original,
          price_doctor = EXCLUDED.price_doctor,
          price_pharmacist = EXCLUDED.price_pharmacist,
          updated_at = now()`,
-      [p.sku, p.name, p.priceOriginal, p.priceDoctor, p.pricePharmacist]
+      [p.name, p.priceOriginal, p.priceDoctor, p.pricePharmacist]
     );
     upserted++;
   }
@@ -490,12 +551,11 @@ app.post('/api/products/import', checkAuth, requireAdmin, async (req, res) => {
 });
 
 app.get('/api/products/export.xlsx', checkAuth, requireAdmin, async (req, res) => {
-  const result = await pool.query('SELECT * FROM products ORDER BY sku ASC');
+  const result = await pool.query('SELECT * FROM products ORDER BY name ASC');
 
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet('SKU Catalog');
+  const sheet = workbook.addWorksheet('Product Catalog');
   sheet.columns = [
-    { header: 'SKU', key: 'sku', width: 16 },
     { header: 'Name', key: 'name', width: 34 },
     { header: 'Original Price', key: 'price_original', width: 16 },
     { header: 'Doctor Price', key: 'price_doctor', width: 16 },
@@ -507,7 +567,6 @@ app.get('/api/products/export.xlsx', checkAuth, requireAdmin, async (req, res) =
 
   result.rows.forEach(p => {
     sheet.addRow({
-      sku: p.sku,
       name: p.name,
       price_original: Number(p.price_original),
       price_doctor: Number(p.price_doctor),
@@ -515,19 +574,19 @@ app.get('/api/products/export.xlsx', checkAuth, requireAdmin, async (req, res) =
       updated_at: new Date(p.updated_at).toLocaleString()
     });
   });
-  ['C', 'D', 'E'].forEach(col => {
+  ['B', 'C', 'D'].forEach(col => {
     sheet.getColumn(col).numFmt = '"RM"#,##0.00';
   });
-  sheet.autoFilter = { from: 'A1', to: 'F1' };
+  sheet.autoFilter = { from: 'A1', to: 'E1' };
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="sku-catalog-${Date.now()}.xlsx"`);
+  res.setHeader('Content-Disposition', `attachment; filename="product-catalog-${Date.now()}.xlsx"`);
   await workbook.xlsx.write(res);
   res.end();
 });
 
-app.delete('/api/products/:sku', checkAuth, requireAdmin, async (req, res) => {
-  await pool.query('DELETE FROM products WHERE sku=$1', [req.params.sku]);
+app.delete('/api/products/:name', checkAuth, requireAdmin, async (req, res) => {
+  await pool.query('DELETE FROM products WHERE name=$1', [req.params.name]);
   res.json({ ok: true });
 });
 
