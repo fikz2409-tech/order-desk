@@ -2,7 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Order Desk</title>
+
+<!-- PWA: lets this be installed to a phone home screen like a real app -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1C2230">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+
+<!-- iOS Safari doesn't fully support the manifest spec, so it needs its
+     own explicit tags for "Add to Home Screen" to look/behave right -->
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Order Desk">
+
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
 
@@ -136,7 +151,8 @@
   .upload-box{background:var(--paper-raised);border:2px dashed var(--line);border-radius:6px;padding:28px;text-align:center;margin-bottom:20px;}
   .upload-box input[type=file]{margin-top:10px;}
   .upload-hint{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);margin-top:8px;}
-  .preview-table, .catalog-table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:13px;}
+  .table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-bottom:16px;}
+  .preview-table, .catalog-table{width:100%;min-width:520px;border-collapse:collapse;font-size:13px;margin-bottom:0;}
   .preview-table th, .catalog-table th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;color:var(--ink-soft);border-bottom:1px solid var(--line);padding:8px 10px;}
   .preview-table td, .catalog-table td{padding:8px 10px;border-bottom:1px solid var(--line);font-family:'IBM Plex Mono',monospace;}
   .confirm-upload-btn{padding:11px 20px;background:var(--ink);color:#fff;border:none;border-radius:3px;font-family:'Space Grotesk',sans-serif;font-weight:600;cursor:pointer;}
@@ -148,12 +164,60 @@
   .item-row input[list]{flex:2;min-width:160px;padding:8px 10px;border:1px solid var(--line);border-radius:3px;font-size:13px;}
   .item-row input[type=number]{width:70px;padding:8px 10px;border:1px solid var(--line);border-radius:3px;font-size:13px;}
   .add-item-btn{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:7px 14px;border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:3px;cursor:pointer;}
-  .line-items-table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;}
+  .line-items-table{width:100%;min-width:460px;border-collapse:collapse;font-size:13px;}
   .line-items-table th{text-align:left;font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;color:var(--ink-soft);padding:6px 8px;border-bottom:1px solid var(--line);}
   .line-items-table td{padding:6px 8px;border-bottom:1px solid var(--line);font-family:'IBM Plex Mono',monospace;font-size:13px;}
   .line-items-table .rm-line-btn{background:none;border:none;color:var(--pending);cursor:pointer;}
   .order-total-line{text-align:right;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;margin:6px 0 16px;}
-  @media (max-width:600px){.row2{grid-template-columns:1fr;} header{flex-direction:column;align-items:flex-start;gap:14px;}}
+  @media (max-width:600px){
+    .app{padding:16px 14px 80px;}
+    .row2{grid-template-columns:1fr;}
+    header{flex-direction:column;align-items:flex-start;gap:14px;}
+    header h1{font-size:24px;}
+
+    .tabs{width:100%;flex-wrap:wrap;gap:6px;}
+    .tab{flex:1 1 auto;text-align:center;padding:9px 10px;}
+    .logout-btn{width:100%;text-align:center;margin-top:4px;}
+
+    .login-box{padding:24px 20px;max-width:100%;}
+
+    .order-card{flex-direction:column;padding:14px;}
+    .order-actions{width:100%;align-items:stretch;min-width:0;}
+    .badges-row{justify-content:flex-start;}
+    .order-actions select, .order-actions .status-select{width:100%;}
+
+    .item-row{flex-direction:column;align-items:stretch;}
+    .item-row input, .item-row .add-item-btn{width:100%;}
+
+    .fulfill-row{flex-direction:column;align-items:stretch;}
+    .fulfill-row input, .fulfill-row textarea{width:100%;}
+
+    .po-attach-row{flex-direction:column;align-items:flex-start;}
+    .po-file-input, .invoice-file-input{max-width:100%;width:100%;}
+
+    .export-bar{flex-direction:column;align-items:stretch;}
+    .export-bar input[type=date]{width:100%;}
+    .export-bar span{order:99;}
+
+    .filters{gap:6px;}
+    .filter-btn{flex:1 1 auto;text-align:center;}
+
+    .share-block{padding:10px;}
+    .followup-item{flex-wrap:wrap;}
+
+    .catalog-search{font-size:16px;} /* 16px prevents iOS auto-zoom on focus */
+    .ticket{padding:18px;}
+    .field input, .field textarea, .fulfill-row input, .fulfill-row textarea,
+    .item-row input, .followup-row input, .export-bar input, .login-box input{
+      font-size:16px; /* 16px minimum prevents iOS Safari auto-zooming in on focus */
+    }
+  }
+
+  @media (max-width:380px){
+    .app{padding:12px 10px 72px;}
+    header h1{font-size:21px;}
+    .ticket{padding:14px;}
+  }
 </style>
 </head>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -415,6 +479,7 @@ function renderLineItems(){
   }
   const total = lineItems.reduce((sum, li) => sum + (li.unitPrice * li.qty), 0);
   wrap.innerHTML = `
+    <div class="table-scroll">
     <table class="line-items-table">
       <tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Line Total</th><th></th></tr>
       ${lineItems.map((li, idx) => `
@@ -427,6 +492,7 @@ function renderLineItems(){
         </tr>
       `).join('')}
     </table>
+    </div>
     <div class="order-total-line">Order Total: RM ${total.toFixed(2)}</div>
   `;
   wrap.querySelectorAll('[data-rmline]').forEach(btn => {
@@ -963,6 +1029,7 @@ function renderCatalogTable(filter){
   const rows = products.filter(p => !f || (p.name||'').toLowerCase().includes(f));
   if(rows.length === 0){ wrap.innerHTML = '<div class="empty">No products yet — upload a CSV or Excel file above.</div>'; return; }
   wrap.innerHTML = `
+    <div class="table-scroll">
     <table class="catalog-table">
       <tr><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th><th></th></tr>
       ${rows.map(p => `
@@ -975,6 +1042,7 @@ function renderCatalogTable(filter){
         </tr>
       `).join('')}
     </table>
+    </div>
   `;
   wrap.querySelectorAll('[data-delname]').forEach(btn => {
     btn.onclick = async () => {
@@ -1091,10 +1159,12 @@ function showImportPreview(){
   wrap.innerHTML = `
     <div style="text-align:left;margin-top:16px;">
       <div class="ts" style="margin-bottom:8px;">Preview (${parsedImportRows.length} rows found, showing first ${preview.length}):</div>
+      <div class="table-scroll">
       <table class="preview-table">
         <tr><th>Name</th><th>Original</th><th>Doctor</th><th>Pharmacist</th></tr>
         ${preview.map(p => `<tr><td style="font-family:'Inter',sans-serif;">${escapeHtml(p.name)}</td><td>RM ${p.priceOriginal.toFixed(2)}</td><td>RM ${p.priceDoctor.toFixed(2)}</td><td>RM ${p.pricePharmacist.toFixed(2)}</td></tr>`).join('')}
       </table>
+      </div>
       <button class="confirm-upload-btn" id="confirmImportBtn">Upload ${parsedImportRows.length} products</button>
     </div>
   `;
@@ -1155,6 +1225,14 @@ async function exportOrders(format){
   }finally{
     btn.disabled = false; btn.textContent = originalText;
   }
+}
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // Non-fatal: app still works fully, just without the install prompt.
+    });
+  });
 }
 </script>
 </body>

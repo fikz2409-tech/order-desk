@@ -203,6 +203,31 @@ Similar to the PO attachment, but the other direction: **Admin** uploads/replace
 
 The "Tracking" field is a **link** (e.g. a courier's real-time tracking URL) rather than a plain AWB number. Once set, it renders as a clickable **"Track Shipment"** link on the order card, in the shipment-info copy text, and in tracking emails — so whoever receives it can click straight through to live tracking instead of manually pasting a number into a courier's site.
 
+## Installing as an app on your phone
+
+Order Desk can be installed to a phone's home screen like a real app —
+no App Store needed. This is a "PWA" (Progressive Web App): same
+website, but it opens full-screen with its own icon, no browser
+address bar.
+
+**iPhone (Safari):**
+1. Open your Order Desk URL in Safari (must be Safari, not Chrome, on iOS)
+2. Tap the **Share** button (square with an arrow, bottom of screen)
+3. Scroll down, tap **"Add to Home Screen"**
+4. Tap **"Add"**
+
+**Android (Chrome):**
+1. Open your Order Desk URL in Chrome
+2. Tap the **⋮** menu (top right)
+3. Tap **"Install app"** or **"Add to Home Screen"**
+4. Confirm
+
+After that, it shows up as a normal app icon and opens without any
+browser UI. This is the same live app running on Railway — no
+separate install, no app store review, no extra hosting. Any update
+pushed to Railway is instantly what everyone sees next time they open
+the app icon.
+
 ## Report exports
 
 The Admin Desk has an export bar at the top with a date range and two
