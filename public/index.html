@@ -98,7 +98,7 @@
   .fulfill-row input{font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;flex:1;min-width:120px;}
 
   .po-attach-row{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;}
-  .po-file-input, .invoice-file-input{font-family:'IBM Plex Mono',monospace;font-size:11px;max-width:200px;}
+  .po-file-input, .invoice-file-input, .slip-file-input{font-family:'IBM Plex Mono',monospace;font-size:11px;max-width:200px;}
   .po-download-btn, .po-remove-btn{font-family:'IBM Plex Mono',monospace;font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer;background:#fff;}
   .po-download-btn{border:1px solid var(--processing);color:var(--processing);}
   .po-remove-btn{border:1px solid var(--pending);color:var(--pending);}
@@ -193,7 +193,7 @@
     .fulfill-row input, .fulfill-row textarea{width:100%;}
 
     .po-attach-row{flex-direction:column;align-items:flex-start;}
-    .po-file-input, .invoice-file-input{max-width:100%;width:100%;}
+    .po-file-input, .invoice-file-input, .slip-file-input{max-width:100%;width:100%;}
 
     .export-bar{flex-direction:column;align-items:stretch;}
     .export-bar input[type=date]{width:100%;}
@@ -380,6 +380,16 @@ function renderSales(){
         <div class="field"><label>Order Amount (RM) — auto-calculated, editable</label><input type="text" id="f_amount" placeholder="0.00" inputmode="decimal"></div>
         <div class="field"><label>Items summary (auto-filled, editable)</label><textarea id="f_items" placeholder="Add items above, or type manually"></textarea></div>
       </div>
+
+      <label class="followup-toggle">
+        <input type="checkbox" id="f_cash_sale">
+        This is a cash sale (customer paid in cash)
+      </label>
+      <div class="field">
+        <label>Payment Slip (optional — receipt/proof of payment)</label>
+        <input type="file" id="f_payment_slip" accept=".pdf,.jpg,.jpeg,.png">
+      </div>
+
       <div class="field"><label>Notes (optional)</label><textarea id="f_notes" style="min-height:44px;font-family:'Inter',sans-serif;" placeholder="Delivery instructions, special requests, etc."></textarea></div>
 
       <label class="followup-toggle">
@@ -519,7 +529,10 @@ async function submitOrder(){
   const items = document.getElementById('f_items').value.trim();
   const notes = document.getElementById('f_notes').value.trim();
   const poNumber = document.getElementById('f_po_number').value.trim();
+  const isCashSale = document.getElementById('f_cash_sale').checked;
+  const paymentSlipFile = document.getElementById('f_payment_slip').files[0];
   if(!sales || !customer || !items){ alert('Please fill in salesperson, customer, and items at minimum.'); return; }
+  if(paymentSlipFile && paymentSlipFile.size > 6 * 1024 * 1024){ alert('Payment slip file is too large — please keep it under 6MB.'); return; }
 
   let followUps = [];
   if(document.getElementById('f_followup_toggle').checked){
@@ -533,7 +546,26 @@ async function submitOrder(){
   btn.disabled = true; btn.textContent = 'Submitting...';
 
   try{
-    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, address, amount, items, notes, followUps, poNumber }) });
+    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, address, amount, items, notes, followUps, poNumber, isCashSale }) });
+
+    if(paymentSlipFile){
+      btn.textContent = 'Uploading payment slip...';
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(paymentSlipFile);
+      });
+      try{
+        await apiFetch(`/orders/${order.id}/payment-slip`, {
+          method:'POST',
+          body: JSON.stringify({ fileName: paymentSlipFile.name, fileType: paymentSlipFile.type, dataBase64: base64 })
+        });
+      }catch(slipErr){
+        alert(`Order ${order.id} was submitted, but the payment slip failed to upload: ${slipErr.message}. You can ask admin to add it manually.`);
+      }
+    }
+
     btn.disabled = false; btn.textContent = 'Submit Order to Admin';
     const confirm = document.getElementById('confirmMsg');
     confirm.style.display = 'block';
@@ -544,6 +576,8 @@ async function submitOrder(){
     document.getElementById('f_items').value='';
     document.getElementById('f_notes').value='';
     document.getElementById('f_po_number').value='';
+    document.getElementById('f_cash_sale').checked = false;
+    document.getElementById('f_payment_slip').value = '';
     document.getElementById('f_followup_toggle').checked = false;
     document.getElementById('followupSection').classList.remove('open');
     document.getElementById('followupRows').innerHTML = '';
@@ -585,7 +619,8 @@ async function renderTrackOrders(){
   list.forEach(o => { if(counts[o.status]!==undefined) counts[o.status]++; });
 
   let filtered = list;
-  if(trackFilter !== 'all') filtered = list.filter(o => o.status === trackFilter);
+  if(trackFilter === 'cash') filtered = list.filter(o => o.is_cash_sale);
+  else if(trackFilter !== 'all') filtered = list.filter(o => o.status === trackFilter);
 
   el.innerHTML = `
     <div class="counts">
@@ -598,6 +633,7 @@ async function renderTrackOrders(){
       <button class="filter-btn ${trackFilter==='pending'?'active':''}" data-tf="pending">Pending</button>
       <button class="filter-btn ${trackFilter==='processing'?'active':''}" data-tf="processing">Processing</button>
       <button class="filter-btn ${trackFilter==='paid'?'active':''}" data-tf="paid">Paid</button>
+      <button class="filter-btn ${trackFilter==='cash'?'active':''}" data-tf="cash">💵 Cash Sales</button>
       <button class="filter-btn" id="refreshTrackBtn" style="margin-left:auto;">↻ Refresh</button>
     </div>
     <div id="trackListWrap"></div>
@@ -611,7 +647,7 @@ async function renderTrackOrders(){
   wrap.innerHTML = filtered.map(o => `
     <div class="order-card status-${o.status}">
       <div class="order-main">
-        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}</div>
+        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}${o.is_cash_sale ? ` <span class="ts" style="color:var(--paid);">· 💵 Cash Sale</span>` : ''}</div>
         <div class="order-customer">${escapeHtml(o.customer)}</div>
         ${o.address ? `<div class="order-meta">📍 ${escapeHtml(o.address)}</div>` : ''}
         <div class="order-items">${escapeHtml(o.items)}</div>
@@ -622,6 +658,7 @@ async function renderTrackOrders(){
         </div>
         ${(o.courier || o.tracking) ? `<div class="order-meta">📦 ${escapeHtml(o.courier||'Courier TBC')}${o.tracking ? ` — <a href="${escapeHtml(o.tracking)}" target="_blank" rel="noopener" style="color:var(--processing);">Track Shipment</a>` : ' — Tracking TBC'}</div>` : ''}
         ${o.has_invoice_attachment ? `<div class="order-meta">🧾 <button type="button" class="po-download-btn" data-invoicedownload-track="${o.id}" style="font-size:11px;">Download Invoice</button></div>` : ''}
+        ${o.has_payment_slip ? `<div class="order-meta">💵 <button type="button" class="po-download-btn" data-slipdownload-track="${o.id}" style="font-size:11px;">Download Payment Slip</button></div>` : ''}
         ${(o.follow_ups && o.follow_ups.length) ? `
           <div class="followup-block">
             <div class="ts" style="color:var(--ink-soft);margin-bottom:4px;">Scheduled deliveries</div>
@@ -639,6 +676,9 @@ async function renderTrackOrders(){
 
   wrap.querySelectorAll('[data-invoicedownload-track]').forEach(btn => {
     btn.onclick = () => downloadOrderFile(btn.dataset.invoicedownloadTrack, 'invoice-attachment');
+  });
+  wrap.querySelectorAll('[data-slipdownload-track]').forEach(btn => {
+    btn.onclick = () => downloadOrderFile(btn.dataset.slipdownloadTrack, 'payment-slip');
   });
 }
 
@@ -663,6 +703,8 @@ async function renderAdmin(){
   if(currentFilter !== 'all'){
     if(currentFilter === 'followups'){
       filtered = orders.filter(o => (o.follow_ups||[]).some(fu => fu.status === 'pending'));
+    } else if(currentFilter === 'cash'){
+      filtered = orders.filter(o => o.is_cash_sale);
     } else if(currentFilter.startsWith('ship:')){
       const val = currentFilter.split(':')[1];
       filtered = orders.filter(o => (o.fulfillment||'notpacked') === val);
@@ -670,6 +712,8 @@ async function renderAdmin(){
       filtered = orders.filter(o => o.status === currentFilter);
     }
   }
+
+  const cashSaleCount = orders.filter(o => o.is_cash_sale).length;
 
   el.innerHTML = `
     <div class="export-bar">
@@ -690,6 +734,8 @@ async function renderAdmin(){
       <div class="count-item"><span class="dot status-paid"></span>${shipCounts.shipped} Shipped</div>
       <div class="count-item">·</div>
       <div class="count-item"><span class="dot" style="background:#7c5cbf"></span>${pendingFollowUps} Follow-ups due</div>
+      <div class="count-item">·</div>
+      <div class="count-item"><span class="dot" style="background:var(--paid)"></span>${cashSaleCount} Cash sales</div>
     </div>
     <div class="filters">
       <button class="filter-btn ${currentFilter==='all'?'active':''}" data-f="all">All (${orders.length})</button>
@@ -699,6 +745,7 @@ async function renderAdmin(){
       <button class="filter-btn ${currentFilter==='ship:notpacked'?'active':''}" data-f="ship:notpacked">Awaiting Packing</button>
       <button class="filter-btn ${currentFilter==='ship:shipped'?'active':''}" data-f="ship:shipped">Shipped</button>
       <button class="filter-btn ${currentFilter==='followups'?'active':''}" data-f="followups">Follow-ups Due</button>
+      <button class="filter-btn ${currentFilter==='cash'?'active':''}" data-f="cash">💵 Cash Sales</button>
       <button class="filter-btn" id="refreshBtn" style="margin-left:auto;">↻ Refresh</button>
     </div>
     <div id="orderList"></div>
@@ -715,7 +762,7 @@ async function renderAdmin(){
   list.innerHTML = filtered.map(o => `
     <div class="order-card status-${o.status}">
       <div class="order-main">
-        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}</div>
+        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}${o.is_cash_sale ? ` <span class="ts" style="color:var(--paid);">· 💵 Cash Sale</span>` : ''}</div>
         <div class="order-customer">${escapeHtml(o.customer)}</div>
         <div class="order-items">${escapeHtml(o.items)}</div>
         <div class="order-meta">
@@ -746,6 +793,14 @@ async function renderAdmin(){
                  <button type="button" class="po-remove-btn" data-invoiceremove="${o.id}">Remove</button>`
               : `<input type="file" class="invoice-file-input" data-invoiceupload="${o.id}" accept=".pdf,.jpg,.jpeg,.png">
                  <span class="ts" style="color:var(--ink-soft);">Attach invoice (PDF/image, max 6MB)</span>`}
+          </div>
+          <div class="po-attach-row">
+            ${o.has_payment_slip
+              ? `<span class="ts" style="color:var(--paid);">💵 ${escapeHtml(o.payment_slip_file_name||'Payment slip')}</span>
+                 <button type="button" class="po-download-btn" data-slipdownload="${o.id}">Download</button>
+                 <button type="button" class="po-remove-btn" data-slipremove="${o.id}">Remove</button>`
+              : `<input type="file" class="slip-file-input" data-slipupload="${o.id}" accept=".pdf,.jpg,.jpeg,.png">
+                 <span class="ts" style="color:var(--ink-soft);">${o.is_cash_sale ? 'Cash sale — no payment slip uploaded yet' : 'Attach payment slip (PDF/image, max 6MB)'}</span>`}
           </div>
           <div class="fulfill-row">
             <input type="text" class="courier-input" data-id="${o.id}" placeholder="Courier (e.g. J&T)" value="${escapeHtml(o.courier||'')}">
@@ -862,12 +917,37 @@ async function renderAdmin(){
     };
   });
 
+  list.querySelectorAll('.slip-file-input').forEach(inp => {
+    inp.onchange = async (e) => {
+      const id = e.target.dataset.slipupload;
+      const file = e.target.files[0];
+      if(!file) return;
+      if(file.size > 6 * 1024 * 1024){ alert('File too large — please keep payment slips under 6MB.'); e.target.value = ''; return; }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1];
+        try{
+          await apiFetch(`/orders/${id}/payment-slip`, {
+            method:'POST',
+            body: JSON.stringify({ fileName: file.name, fileType: file.type, dataBase64: base64 })
+          });
+          renderAdmin();
+        }catch(err){ alert(err.message || 'Upload failed'); }
+      };
+      reader.readAsDataURL(file);
+    };
+  });
+
   list.querySelectorAll('[data-podownload]').forEach(btn => {
     btn.onclick = () => downloadOrderFile(btn.dataset.podownload, 'po-attachment');
   });
 
   list.querySelectorAll('[data-invoicedownload]').forEach(btn => {
     btn.onclick = () => downloadOrderFile(btn.dataset.invoicedownload, 'invoice-attachment');
+  });
+
+  list.querySelectorAll('[data-slipdownload]').forEach(btn => {
+    btn.onclick = () => downloadOrderFile(btn.dataset.slipdownload, 'payment-slip');
   });
 
   list.querySelectorAll('[data-poremove]').forEach(btn => {
@@ -881,6 +961,13 @@ async function renderAdmin(){
     btn.onclick = async () => {
       if(!confirm('Remove the attached invoice from this order?')) return;
       try{ await apiFetch(`/orders/${btn.dataset.invoiceremove}/invoice-attachment`, { method:'DELETE' }); renderAdmin(); }catch(err){ alert(err.message); }
+    };
+  });
+
+  list.querySelectorAll('[data-slipremove]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm('Remove the attached payment slip from this order?')) return;
+      try{ await apiFetch(`/orders/${btn.dataset.slipremove}/payment-slip`, { method:'DELETE' }); renderAdmin(); }catch(err){ alert(err.message); }
     };
   });
 

@@ -38,6 +38,10 @@ async function init() {
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS invoice_file_name TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS invoice_file_type TEXT DEFAULT '';`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS invoice_file_data TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_cash_sale BOOLEAN DEFAULT false;`);
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_slip_file_name TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_slip_file_type TEXT DEFAULT '';`);
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_slip_file_data TEXT DEFAULT '';`);
 
   // Products table: identified by Name, not SKU (no formal SKU codes in
   // this business — items are just named products with three price tiers).

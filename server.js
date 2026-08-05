@@ -91,15 +91,18 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/orders', checkAuth, async (req, res) => {
-  // Excludes po_file_data/invoice_file_data (base64 file content) from the
-  // list to keep this fast — full attachments are only fetched on demand.
+  // Excludes po_file_data/invoice_file_data/payment_slip_file_data (base64
+  // file content) from the list to keep this fast — full attachments are
+  // only fetched on demand.
   const result = await pool.query(`
     SELECT id, salesperson, salesperson_email, customer, address, amount, items, notes,
            status, fulfillment, courier, tracking, history, follow_ups,
            tracking_emailed, po_number, po_file_name, po_file_type, created_at,
-           invoice_file_name, invoice_file_type,
+           invoice_file_name, invoice_file_type, is_cash_sale,
+           payment_slip_file_name, payment_slip_file_type,
            (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment,
-           (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment
+           (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment,
+           (payment_slip_file_data IS NOT NULL AND payment_slip_file_data != '') AS has_payment_slip
     FROM orders ORDER BY created_at DESC
   `);
   res.json(result.rows);
@@ -119,6 +122,8 @@ function buildFilterQuery(query) {
     status, fulfillment, courier, tracking, history, follow_ups, po_number,
     po_file_name, (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment,
     invoice_file_name, (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment,
+    is_cash_sale, payment_slip_file_name,
+    (payment_slip_file_data IS NOT NULL AND payment_slip_file_data != '') AS has_payment_slip,
     created_at`;
   return { text: `SELECT ${cols} FROM orders ${where} ORDER BY created_at DESC`, params };
 }
@@ -134,6 +139,8 @@ const EXPORT_COLUMNS = [
   { header: 'Items', key: 'items', width: 34 },
   { header: 'Amount (RM)', key: 'amount', width: 14 },
   { header: 'Payment Status', key: 'status', width: 16 },
+  { header: 'Cash Sale', key: 'cashSaleLabel', width: 12 },
+  { header: 'Payment Slip Attached', key: 'paymentSlipAttachedLabel', width: 16 },
   { header: 'Fulfillment', key: 'fulfillment', width: 14 },
   { header: 'Courier', key: 'courier', width: 16 },
   { header: 'Tracking Link', key: 'tracking', width: 30 },
@@ -161,7 +168,7 @@ app.get('/api/orders/export.csv', checkAuth, requireAdmin, async (req, res) => {
   const result = await pool.query(text, params);
   const headerRow = EXPORT_COLUMNS.map(c => csvEscape(c.header)).join(',');
   const rows = result.rows.map(o => {
-    const rowData = { ...o, followUpsSummary: summarizeFollowUps(o.follow_ups), poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No', invoiceAttachedLabel: o.has_invoice_attachment ? 'Yes' : 'No' };
+    const rowData = { ...o, followUpsSummary: summarizeFollowUps(o.follow_ups), poAttachedLabel: o.has_po_attachment ? 'Yes' : 'No', invoiceAttachedLabel: o.has_invoice_attachment ? 'Yes' : 'No', cashSaleLabel: o.is_cash_sale ? 'Yes' : 'No', paymentSlipAttachedLabel: o.has_payment_slip ? 'Yes' : 'No' };
     return EXPORT_COLUMNS.map(c => csvEscape(c.key === 'created_at' ? new Date(rowData[c.key]).toLocaleString() : rowData[c.key])).join(',');
   });
   const csv = [headerRow, ...rows].join('\r\n');
@@ -192,6 +199,8 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
       items: o.items,
       amount: o.amount,
       status: o.status,
+      cashSaleLabel: o.is_cash_sale ? 'Yes' : 'No',
+      paymentSlipAttachedLabel: o.has_payment_slip ? 'Yes' : 'No',
       fulfillment: o.fulfillment,
       courier: o.courier,
       tracking: o.tracking,
@@ -209,7 +218,7 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
 });
 
 app.post('/api/orders', checkAuth, async (req, res) => {
-  const { salesperson, salespersonEmail, customer, address, amount, items, notes, followUps, poNumber } = req.body || {};
+  const { salesperson, salespersonEmail, customer, address, amount, items, notes, followUps, poNumber, isCashSale } = req.body || {};
   if (!salesperson || !customer || !items) {
     return res.status(400).json({ error: 'salesperson, customer, and items are required' });
   }
@@ -230,11 +239,14 @@ app.post('/api/orders', checkAuth, async (req, res) => {
   if (cleanFollowUps.length) {
     history.push({ ts: new Date().toISOString(), text: `${cleanFollowUps.length} scheduled follow-up delivery(ies) added` });
   }
+  if (isCashSale) {
+    history.push({ ts: new Date().toISOString(), text: 'Marked as a cash sale' });
+  }
 
   await pool.query(
-    `INSERT INTO orders (id, salesperson, salesperson_email, customer, address, amount, items, notes, history, follow_ups, po_number)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [id, salesperson, salespersonEmail || '', customer, address || '', amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim()]
+    `INSERT INTO orders (id, salesperson, salesperson_email, customer, address, amount, items, notes, history, follow_ups, po_number, is_cash_sale)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [id, salesperson, salespersonEmail || '', customer, address || '', amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim(), !!isCashSale]
   );
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.status(201).json(result.rows[0]);
@@ -418,6 +430,59 @@ app.delete('/api/orders/:id/invoice-attachment', checkAuth, requireAdmin, async 
   history.push({ ts: new Date().toISOString(), text: `Invoice removed: ${order.invoice_file_name}` });
   await pool.query(
     `UPDATE orders SET invoice_file_name='', invoice_file_type='', invoice_file_data='', history=$1 WHERE id=$2`,
+    [JSON.stringify(history), req.params.id]
+  );
+  res.json({ ok: true });
+});
+
+// Payment slip: unlike PO/Invoice attachments, upload is open to ANY
+// signed-in role — Sales uploads this at order submission time as proof
+// of a cash sale, so it can't be admin-gated the way those others are.
+app.post('/api/orders/:id/payment-slip', checkAuth, async (req, res) => {
+  const { id } = req.params;
+  const { fileName, fileType, dataBase64 } = req.body || {};
+  if (!fileName || !dataBase64) return res.status(400).json({ error: 'No file provided' });
+
+  const approxBytes = Math.ceil((dataBase64.length * 3) / 4);
+  if (approxBytes > MAX_ATTACHMENT_BYTES) {
+    return res.status(400).json({ error: 'File too large — please keep payment slips under 6MB' });
+  }
+
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const order = existing.rows[0];
+  const history = order.history || [];
+  history.push({ ts: new Date().toISOString(), text: `Payment slip uploaded: ${fileName}` });
+
+  await pool.query(
+    'UPDATE orders SET payment_slip_file_name=$1, payment_slip_file_type=$2, payment_slip_file_data=$3, history=$4 WHERE id=$5',
+    [fileName, fileType || 'application/octet-stream', dataBase64, JSON.stringify(history), id]
+  );
+  res.json({ ok: true });
+});
+
+app.get('/api/orders/:id/payment-slip', checkAuth, async (req, res) => {
+  const result = await pool.query('SELECT payment_slip_file_name, payment_slip_file_type, payment_slip_file_data FROM orders WHERE id=$1', [req.params.id]);
+  if (result.rows.length === 0 || !result.rows[0].payment_slip_file_data) {
+    return res.status(404).json({ error: 'No payment slip for this order' });
+  }
+  const { payment_slip_file_name, payment_slip_file_type, payment_slip_file_data } = result.rows[0];
+  const buffer = Buffer.from(payment_slip_file_data, 'base64');
+  res.setHeader('Content-Type', payment_slip_file_type || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${payment_slip_file_name}"`);
+  res.send(buffer);
+});
+
+// Removal stays admin-only — deleting proof of payment is destructive
+// enough to warrant the higher permission bar.
+app.delete('/api/orders/:id/payment-slip', checkAuth, requireAdmin, async (req, res) => {
+  const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [req.params.id]);
+  if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
+  const order = existing.rows[0];
+  const history = order.history || [];
+  history.push({ ts: new Date().toISOString(), text: `Payment slip removed: ${order.payment_slip_file_name}` });
+  await pool.query(
+    `UPDATE orders SET payment_slip_file_name='', payment_slip_file_type='', payment_slip_file_data='', history=$1 WHERE id=$2`,
     [JSON.stringify(history), req.params.id]
   );
   res.json({ ok: true });

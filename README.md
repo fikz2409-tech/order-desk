@@ -92,6 +92,9 @@ password check for a real login lookup.
 | POST   | /api/orders/:id/invoice-attachment | admin only | Upload/replace the invoice attached to an order |
 | GET    | /api/orders/:id/invoice-attachment | any role | Download the attached invoice |
 | DELETE | /api/orders/:id/invoice-attachment | admin only | Remove the attached invoice |
+| POST   | /api/orders/:id/payment-slip | any role | Upload/replace the payment slip (Sales uploads at order submission) |
+| GET    | /api/orders/:id/payment-slip | any role | Download the attached payment slip |
+| DELETE | /api/orders/:id/payment-slip | admin only | Remove the attached payment slip |
 | POST   | /api/orders/:id/email-tracking | admin only | Email current tracking/shipment info to the salesperson on file |
 | POST   | /api/orders/:id/followups/:fid/email-reminder | admin only | Email a reminder about a scheduled follow-up to the salesperson |
 | GET    | /api/products | any role | List the product catalog |
@@ -194,6 +197,17 @@ For customers who order against a PO:
 ## Delivery address
 
 Sales enters the **delivery address** when submitting an order. Admin can edit it later directly on the order card. It shows on the Sales "Track Orders" view too.
+
+## Cash sales & payment slips
+
+Sales can flag an order as a **Cash Sale** when submitting it, and optionally attach a **payment slip** (photo or PDF of the receipt/proof of payment) at the same time.
+
+- Both are optional and set together on the Submit Order screen
+- A cash-sale order shows a **💵 Cash Sale** badge next to its Order ID, on both the Admin Desk and Sales' Track Orders view
+- **Uploading a payment slip does not auto-mark the order as Paid** — Admin still reviews and confirms payment status manually, same as any other order
+- Admin can also add, replace, or remove the payment slip later from the Admin Desk if needed
+- A **"💵 Cash Sales"** filter is available on both Admin Desk and Track Orders to quickly see all cash-sale orders
+- Cash Sale status and whether a slip is attached both appear in the CSV/Excel exports
 
 ## Invoice attachment
 
