@@ -320,8 +320,11 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
       `Payment status: ${refreshed.status}`,
       `Fulfillment: ${refreshed.fulfillment}`,
       `Courier: ${refreshed.courier || 'TBC'}`,
-      `Tracking Link: ${refreshed.tracking || 'TBC'}`
-    ].filter(Boolean).join('\n');
+      `Tracking Link: ${refreshed.tracking || 'TBC'}`,
+      '',
+      'Items ordered:',
+      refreshed.items || '(none listed)'
+    ].filter(v => v !== null && v !== undefined).join('\n');
     try {
       await sendMail({ to: refreshed.salesperson_email, subject: `Order ${refreshed.id} — shipped`, text });
       const newHistory = refreshed.history || [];
@@ -535,8 +538,11 @@ app.post('/api/orders/:id/email-tracking', checkAuth, requireAdmin, async (req, 
     `Fulfillment: ${o.fulfillment}`,
     `Courier: ${o.courier || 'TBC'}`,
     `Tracking Link: ${o.tracking || 'TBC'}`,
-    o.notes ? `Notes: ${o.notes}` : null
-  ].filter(Boolean).join('\n');
+    o.notes ? `Notes: ${o.notes}` : null,
+    '',
+    'Items ordered:',
+    o.items || '(none listed)'
+  ].filter(v => v !== null && v !== undefined).join('\n');
 
   try {
     await sendMail({ to: o.salesperson_email, subject: `Order ${o.id} — tracking update`, text });
