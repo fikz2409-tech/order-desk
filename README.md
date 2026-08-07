@@ -101,6 +101,8 @@ password check for a real login lookup.
 | POST   | /api/products/import | admin only | Bulk upload/update products from a parsed CSV or Excel file |
 | GET    | /api/products/export.xlsx | admin only | Download the catalog as Excel (server-side; the Products tab also has a client-side export button) |
 | DELETE | /api/products/:name | admin only | Remove a single product from the catalog |
+| GET    | /api/bonus-tiers | any role | List the bonus scheme tiers |
+| PATCH  | /api/bonus-tiers/:label | admin only | Update the remarks for a bonus tier |
 | GET    | /api/orders/export.csv  | admin only | Download orders as CSV. Optional query params: `status`, `fulfillment`, `from`, `to` |
 | GET    | /api/orders/export.xlsx | admin only | Download orders as a formatted Excel file. Same optional query params |
 
@@ -184,6 +186,21 @@ For customers who buy stock in bulk but want it released in batches
 - Pending follow-ups also appear in the CSV/Excel export as a
   "Pending Follow-ups" column, so you can report on what's still owed
   to customers.
+
+## Bonus scheme
+
+Below the product catalog on the **Products** tab is a **Bonus Scheme** section — a fixed set of "buy X get Y free" tiers, used across the business generally rather than tied to any one product:
+
+- 6+1
+- 15+3
+- 30+10
+- 60+25
+- 120+60
+- 240+150
+
+Each tier has a **Remarks** field admin can edit for any custom pricing arrangement on that tier. The tiers themselves are fixed and seeded automatically on first startup; only the remarks are editable.
+
+**Sales can apply a tier to an order** — a dropdown on the Submit Order screen ("Apply Bonus Tier") lets Sales select one of the six tiers when creating an order; the tier's remarks show automatically once selected. It's saved with the order and shown as a badge (🎁) next to the Order ID on both Admin Desk and Track Orders. Admin can also change or clear the applied tier later directly on the order card. A full read-only reference table (all tiers + remarks) also appears further down the Submit Order screen for browsing.
 
 ## Purchase Orders (PO)
 

@@ -262,6 +262,7 @@
 const API = '/api';
 let orders = [];
 let products = [];
+let bonusTiers = [];
 let lineItems = []; // items added to the current in-progress order via SKU picker
 let currentFilter = 'all';
 let authToken = localStorage.getItem('od_token') || null;
@@ -318,6 +319,7 @@ async function enterApp(){
     document.getElementById('tabTrack').style.display = 'inline-block';
   }
   await loadProducts();
+  await loadBonusTiers();
   renderSales();
 }
 
@@ -354,6 +356,15 @@ function renderSales(){
         <div class="field"><label>PO Number (if applicable)</label><input type="text" id="f_po_number" placeholder="e.g. PO-2026-0456"></div>
       </div>
       <div class="field"><label>Delivery Address</label><textarea id="f_address" style="min-height:44px;font-family:'Inter',sans-serif;" placeholder="Full delivery address"></textarea></div>
+      <div class="row2">
+        <div class="field">
+          <label>Apply Bonus Tier (optional)</label>
+          <select id="f_bonus_tier" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:3px;font-size:14px;">
+            <option value="">None</option>
+          </select>
+          <div class="ts" id="bonusTierRemark" style="color:var(--ink-soft);margin-top:6px;"></div>
+        </div>
+      </div>
       <div class="row2">
         <div class="field">
           <label>Customer Type (pricing tier)</label>
@@ -404,7 +415,15 @@ function renderSales(){
       <button class="submit-btn" id="submitBtn">Submit Order to Admin</button>
       <div class="confirm" id="confirmMsg"></div>
     </div>
+
+    <div class="ticket" style="margin-top:20px;">
+      <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;margin-bottom:4px;">Bonus Scheme (reference)</div>
+      <div class="ts" style="color:var(--ink-soft);margin-bottom:12px;">Standard buy/free tiers — for custom pricing, check Remarks or ask Admin.</div>
+      <div id="salesBonusTiersWrap"></div>
+    </div>
   `;
+  renderSalesBonusTiers();
+  populateBonusTierSelect();
   document.getElementById('submitBtn').onclick = submitOrder;
 
   lineItems = [];
@@ -530,6 +549,7 @@ async function submitOrder(){
   const notes = document.getElementById('f_notes').value.trim();
   const poNumber = document.getElementById('f_po_number').value.trim();
   const isCashSale = document.getElementById('f_cash_sale').checked;
+  const bonusTier = document.getElementById('f_bonus_tier').value;
   const paymentSlipFile = document.getElementById('f_payment_slip').files[0];
   if(!sales || !customer || !items){ alert('Please fill in salesperson, customer, and items at minimum.'); return; }
   if(paymentSlipFile && paymentSlipFile.size > 6 * 1024 * 1024){ alert('Payment slip file is too large — please keep it under 6MB.'); return; }
@@ -546,7 +566,7 @@ async function submitOrder(){
   btn.disabled = true; btn.textContent = 'Submitting...';
 
   try{
-    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, address, amount, items, notes, followUps, poNumber, isCashSale }) });
+    const order = await apiFetch('/orders', { method:'POST', body: JSON.stringify({ salesperson: sales, salespersonEmail: salesEmail, customer, address, amount, items, notes, followUps, poNumber, isCashSale, bonusTier }) });
 
     if(paymentSlipFile){
       btn.textContent = 'Uploading payment slip...';
@@ -577,6 +597,8 @@ async function submitOrder(){
     document.getElementById('f_notes').value='';
     document.getElementById('f_po_number').value='';
     document.getElementById('f_cash_sale').checked = false;
+    document.getElementById('f_bonus_tier').value = '';
+    document.getElementById('bonusTierRemark').textContent = '';
     document.getElementById('f_payment_slip').value = '';
     document.getElementById('f_followup_toggle').checked = false;
     document.getElementById('followupSection').classList.remove('open');
@@ -647,7 +669,7 @@ async function renderTrackOrders(){
   wrap.innerHTML = filtered.map(o => `
     <div class="order-card status-${o.status}">
       <div class="order-main">
-        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}${o.is_cash_sale ? ` <span class="ts" style="color:var(--paid);">· 💵 Cash Sale</span>` : ''}</div>
+        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}${o.is_cash_sale ? ` <span class="ts" style="color:var(--paid);">· 💵 Cash Sale</span>` : ''}${o.bonus_tier ? ` <span class="ts" style="color:#7c5cbf;">· 🎁 ${escapeHtml(o.bonus_tier)}</span>` : ''}</div>
         <div class="order-customer">${escapeHtml(o.customer)}</div>
         ${o.address ? `<div class="order-meta">📍 ${escapeHtml(o.address)}</div>` : ''}
         <div class="order-items">${escapeHtml(o.items)}</div>
@@ -762,7 +784,7 @@ async function renderAdmin(){
   list.innerHTML = filtered.map(o => `
     <div class="order-card status-${o.status}">
       <div class="order-main">
-        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}${o.is_cash_sale ? ` <span class="ts" style="color:var(--paid);">· 💵 Cash Sale</span>` : ''}</div>
+        <div class="order-id">${o.id}${o.po_number ? ` <span class="ts" style="color:var(--processing);">· PO: ${escapeHtml(o.po_number)}</span>` : ''}${o.is_cash_sale ? ` <span class="ts" style="color:var(--paid);">· 💵 Cash Sale</span>` : ''}${o.bonus_tier ? ` <span class="ts" style="color:#7c5cbf;">· 🎁 ${escapeHtml(o.bonus_tier)}</span>` : ''}</div>
         <div class="order-customer">${escapeHtml(o.customer)}</div>
         <div class="order-items">${escapeHtml(o.items)}</div>
         <div class="order-meta">
@@ -774,6 +796,12 @@ async function renderAdmin(){
         <div class="fulfill-block">
           <div class="fulfill-row">
             <input type="text" class="po-input" data-id="${o.id}" placeholder="PO Number (if applicable)" value="${escapeHtml(o.po_number||'')}">
+          </div>
+          <div class="fulfill-row">
+            <select class="bonus-tier-select" data-id="${o.id}" style="flex:1;min-width:120px;padding:6px 8px;border:1px solid var(--line);border-radius:3px;font-family:'IBM Plex Mono',monospace;font-size:12px;">
+              <option value="" ${!o.bonus_tier ? 'selected' : ''}>No bonus tier</option>
+              ${bonusTiers.map(t => `<option value="${escapeHtml(t.label)}" ${o.bonus_tier===t.label?'selected':''}>${escapeHtml(t.label)} (Buy ${t.buy_qty} Get ${t.free_qty} Free)</option>`).join('')}
+            </select>
           </div>
           <div class="po-attach-row">
             ${o.has_po_attachment
@@ -864,13 +892,14 @@ async function renderAdmin(){
     };
   });
 
-  list.querySelectorAll('.courier-input, .tracking-input, .po-input, .address-input').forEach(inp => {
+  list.querySelectorAll('.courier-input, .tracking-input, .po-input, .address-input, .bonus-tier-select').forEach(inp => {
     inp.onchange = async (e) => {
       const id = e.target.dataset.id;
       let field = 'tracking';
       if(e.target.classList.contains('courier-input')) field = 'courier';
       else if(e.target.classList.contains('po-input')) field = 'poNumber';
       else if(e.target.classList.contains('address-input')) field = 'address';
+      else if(e.target.classList.contains('bonus-tier-select')) field = 'bonusTier';
       try{ await apiFetch(`/orders/${id}`, { method:'PATCH', body: JSON.stringify({ [field]: e.target.value }) }); renderAdmin(); }catch(e){}
     };
   });
@@ -1056,6 +1085,10 @@ async function loadProducts(){
   try{ products = await apiFetch('/products'); }catch(e){ products = []; }
 }
 
+async function loadBonusTiers(){
+  try{ bonusTiers = await apiFetch('/bonus-tiers'); }catch(e){ bonusTiers = []; }
+}
+
 function findProduct(name){
   return products.find(p => p.name.toLowerCase() === String(name||'').trim().toLowerCase());
 }
@@ -1087,12 +1120,89 @@ function renderProducts(){
     </div>
     <input type="text" class="catalog-search" id="catalogSearch" placeholder="Search by product name...">
     <div id="catalogTableWrap"></div>
+
+    <div style="margin-top:32px;padding-top:20px;border-top:2px solid var(--ink);">
+      <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;margin-bottom:4px;">Bonus Scheme</div>
+      <div class="ts" style="color:var(--ink-soft);margin-bottom:14px;">Standard "buy X get Y free" tiers. Add remarks for any custom pricing arrangement per tier.</div>
+      <div id="bonusTiersWrap"></div>
+    </div>
   `;
   document.getElementById('catalogFile').onchange = handleCatalogFile;
   document.getElementById('refreshCatalogBtn').onclick = async () => { await loadProducts(); renderProducts(); };
   document.getElementById('exportCatalogBtn').onclick = exportCatalog;
   document.getElementById('catalogSearch').oninput = (e) => renderCatalogTable(e.target.value);
   renderCatalogTable('');
+  renderBonusTiers();
+}
+
+function populateBonusTierSelect(){
+  const select = document.getElementById('f_bonus_tier');
+  if(!select) return;
+  select.innerHTML = '<option value="">None</option>' + bonusTiers.map(t =>
+    `<option value="${escapeHtml(t.label)}">${escapeHtml(t.label)} (Buy ${t.buy_qty} Get ${t.free_qty} Free)</option>`
+  ).join('');
+  select.onchange = () => {
+    const tier = bonusTiers.find(t => t.label === select.value);
+    const remarkEl = document.getElementById('bonusTierRemark');
+    remarkEl.textContent = (tier && tier.remarks) ? `Remarks: ${tier.remarks}` : '';
+  };
+}
+
+async function renderSalesBonusTiers(){
+  const wrap = document.getElementById('salesBonusTiersWrap');
+  if(!wrap) return;
+  wrap.innerHTML = '<div class="loading">Loading…</div>';
+  let tiers;
+  try{ tiers = await apiFetch('/bonus-tiers'); }catch(e){ wrap.innerHTML = ''; return; }
+
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table class="catalog-table">
+      <tr><th>Tier</th><th>Buy</th><th>Free</th><th>Remarks</th></tr>
+      ${tiers.map(t => `
+        <tr>
+          <td style="font-family:'Space Grotesk',sans-serif;font-weight:600;">${escapeHtml(t.label)}</td>
+          <td>${t.buy_qty}</td>
+          <td>${t.free_qty}</td>
+          <td style="font-family:'Inter',sans-serif;">${escapeHtml(t.remarks||'—')}</td>
+        </tr>
+      `).join('')}
+    </table>
+    </div>
+  `;
+}
+
+async function renderBonusTiers(){
+  const wrap = document.getElementById('bonusTiersWrap');
+  wrap.innerHTML = '<div class="loading">Loading bonus tiers…</div>';
+  let tiers;
+  try{ tiers = await apiFetch('/bonus-tiers'); }catch(e){ wrap.innerHTML = '<div class="empty">Could not load bonus tiers.</div>'; return; }
+
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table class="catalog-table">
+      <tr><th>Tier</th><th>Buy</th><th>Free</th><th>Remarks (custom pricing)</th></tr>
+      ${tiers.map(t => `
+        <tr>
+          <td style="font-family:'Space Grotesk',sans-serif;font-weight:600;">${escapeHtml(t.label)}</td>
+          <td>${t.buy_qty}</td>
+          <td>${t.free_qty}</td>
+          <td><input type="text" class="bonus-remarks-input" data-label="${escapeHtml(t.label)}" value="${escapeHtml(t.remarks||'')}" placeholder="e.g. custom pricing for this tier" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:3px;font-family:'Inter',sans-serif;font-size:13px;"></td>
+        </tr>
+      `).join('')}
+    </table>
+    </div>
+  `;
+  wrap.querySelectorAll('.bonus-remarks-input').forEach(inp => {
+    inp.onchange = async (e) => {
+      try{
+        await apiFetch(`/bonus-tiers/${encodeURIComponent(e.target.dataset.label)}`, {
+          method:'PATCH',
+          body: JSON.stringify({ remarks: e.target.value })
+        });
+      }catch(err){ alert(err.message || 'Failed to save remarks'); }
+    };
+  });
 }
 
 function exportCatalog(){

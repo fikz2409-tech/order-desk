@@ -98,7 +98,7 @@ app.get('/api/orders', checkAuth, async (req, res) => {
     SELECT id, salesperson, salesperson_email, customer, address, amount, items, notes,
            status, fulfillment, courier, tracking, history, follow_ups,
            tracking_emailed, po_number, po_file_name, po_file_type, created_at,
-           invoice_file_name, invoice_file_type, is_cash_sale,
+           invoice_file_name, invoice_file_type, is_cash_sale, bonus_tier,
            payment_slip_file_name, payment_slip_file_type,
            (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment,
            (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment,
@@ -122,7 +122,7 @@ function buildFilterQuery(query) {
     status, fulfillment, courier, tracking, history, follow_ups, po_number,
     po_file_name, (po_file_data IS NOT NULL AND po_file_data != '') AS has_po_attachment,
     invoice_file_name, (invoice_file_data IS NOT NULL AND invoice_file_data != '') AS has_invoice_attachment,
-    is_cash_sale, payment_slip_file_name,
+    is_cash_sale, bonus_tier, payment_slip_file_name,
     (payment_slip_file_data IS NOT NULL AND payment_slip_file_data != '') AS has_payment_slip,
     created_at`;
   return { text: `SELECT ${cols} FROM orders ${where} ORDER BY created_at DESC`, params };
@@ -140,6 +140,7 @@ const EXPORT_COLUMNS = [
   { header: 'Amount (RM)', key: 'amount', width: 14 },
   { header: 'Payment Status', key: 'status', width: 16 },
   { header: 'Cash Sale', key: 'cashSaleLabel', width: 12 },
+  { header: 'Bonus Tier', key: 'bonus_tier', width: 14 },
   { header: 'Payment Slip Attached', key: 'paymentSlipAttachedLabel', width: 16 },
   { header: 'Fulfillment', key: 'fulfillment', width: 14 },
   { header: 'Courier', key: 'courier', width: 16 },
@@ -200,6 +201,7 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
       amount: o.amount,
       status: o.status,
       cashSaleLabel: o.is_cash_sale ? 'Yes' : 'No',
+      bonus_tier: o.bonus_tier,
       paymentSlipAttachedLabel: o.has_payment_slip ? 'Yes' : 'No',
       fulfillment: o.fulfillment,
       courier: o.courier,
@@ -218,7 +220,7 @@ app.get('/api/orders/export.xlsx', checkAuth, requireAdmin, async (req, res) => 
 });
 
 app.post('/api/orders', checkAuth, async (req, res) => {
-  const { salesperson, salespersonEmail, customer, address, amount, items, notes, followUps, poNumber, isCashSale } = req.body || {};
+  const { salesperson, salespersonEmail, customer, address, amount, items, notes, followUps, poNumber, isCashSale, bonusTier } = req.body || {};
   if (!salesperson || !customer || !items) {
     return res.status(400).json({ error: 'salesperson, customer, and items are required' });
   }
@@ -242,11 +244,14 @@ app.post('/api/orders', checkAuth, async (req, res) => {
   if (isCashSale) {
     history.push({ ts: new Date().toISOString(), text: 'Marked as a cash sale' });
   }
+  if (bonusTier) {
+    history.push({ ts: new Date().toISOString(), text: `Bonus tier applied: ${bonusTier}` });
+  }
 
   await pool.query(
-    `INSERT INTO orders (id, salesperson, salesperson_email, customer, address, amount, items, notes, history, follow_ups, po_number, is_cash_sale)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-    [id, salesperson, salespersonEmail || '', customer, address || '', amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim(), !!isCashSale]
+    `INSERT INTO orders (id, salesperson, salesperson_email, customer, address, amount, items, notes, history, follow_ups, po_number, is_cash_sale, bonus_tier)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [id, salesperson, salespersonEmail || '', customer, address || '', amount || '', items, notes || '', JSON.stringify(history), JSON.stringify(cleanFollowUps), (poNumber || '').trim(), !!isCashSale, (bonusTier || '').trim()]
   );
   const result = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   res.status(201).json(result.rows[0]);
@@ -255,7 +260,7 @@ app.post('/api/orders', checkAuth, async (req, res) => {
 // Only admin can update order status/fulfillment/courier/tracking.
 app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { status, fulfillment, courier, tracking, poNumber, address } = req.body || {};
+  const { status, fulfillment, courier, tracking, poNumber, address, bonusTier } = req.body || {};
 
   const existing = await pool.query('SELECT * FROM orders WHERE id=$1', [id]);
   if (existing.rows.length === 0) return res.status(404).json({ error: 'Order not found' });
@@ -280,6 +285,9 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
   if (address !== undefined && address !== order.address) {
     history.push({ ts: new Date().toISOString(), text: `Delivery address updated` });
   }
+  if (bonusTier !== undefined && bonusTier !== order.bonus_tier) {
+    history.push({ ts: new Date().toISOString(), text: `Bonus tier set to "${bonusTier || 'none'}"` });
+  }
 
   await pool.query(
     `UPDATE orders
@@ -289,9 +297,10 @@ app.patch('/api/orders/:id', checkAuth, requireAdmin, async (req, res) => {
          tracking = COALESCE($4, tracking),
          po_number = COALESCE($5, po_number),
          address = COALESCE($6, address),
-         history = $7
-     WHERE id = $8`,
-    [status, fulfillment, courier, tracking, poNumber, address, JSON.stringify(history), id]
+         bonus_tier = COALESCE($7, bonus_tier),
+         history = $8
+     WHERE id = $9`,
+    [status, fulfillment, courier, tracking, poNumber, address, bonusTier, JSON.stringify(history), id]
   );
 
   // Auto-send: once an order is Shipped with courier + tracking present,
@@ -653,6 +662,24 @@ app.get('/api/products/export.xlsx', checkAuth, requireAdmin, async (req, res) =
 app.delete('/api/products/:name', checkAuth, requireAdmin, async (req, res) => {
   await pool.query('DELETE FROM products WHERE name=$1', [req.params.name]);
   res.json({ ok: true });
+});
+
+// Bonus scheme: fixed "buy X get Y free" tiers, global (not per-product).
+// Any signed-in role can view; only admin can edit the remarks.
+app.get('/api/bonus-tiers', checkAuth, async (req, res) => {
+  const result = await pool.query('SELECT * FROM bonus_tiers ORDER BY sort_order ASC');
+  res.json(result.rows);
+});
+
+app.patch('/api/bonus-tiers/:label', checkAuth, requireAdmin, async (req, res) => {
+  const { remarks } = req.body || {};
+  if (remarks === undefined) return res.status(400).json({ error: 'remarks is required' });
+  const result = await pool.query(
+    'UPDATE bonus_tiers SET remarks=$1 WHERE label=$2 RETURNING *',
+    [remarks, req.params.label]
+  );
+  if (result.rows.length === 0) return res.status(404).json({ error: 'Bonus tier not found' });
+  res.json(result.rows[0]);
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
